@@ -33,18 +33,6 @@ The script matches the full filename stem, preserving image variants. It default
 
 Both eyes, visits and image variants stay together by `patient_id`. Any non-VISUSS images belonging to a VISUSS patient are excluded. All VISUSS patients from the previous student's CSV are protected, including patients without matched images.
 
-Candidate patient splits are assessed for site representation and both graders' grade distributions, using only the non-test pool. Exact balance is not guaranteed. Inspect `prepared/split_report.json` for patient counts, image counts, grade counts, excluded images and unmatched identifiers. Both training runs require examples of all five grades in training. Do not alter the split after reviewing test performance. Preparation refuses to overwrite an existing manifest.
-
-Only the images present in both CSVs are used for this controlled comparison. The manifest is local to this machine because its image paths are absolute.
-
-## Short check
-
-```bash
-python train.py --grader shane --epochs 1 --output-dir runs/shane_check
-```
-
-This trains for one epoch and checks validation; VISUSS performance is not calculated. It may take time on a CPU. Automatic device selection uses CUDA, then Apple MPS, then CPU. If MPS operations fail, add `--device cpu`.
-
 ## Full runs
 
 Agree training settings before final test evaluation. For example:
@@ -53,16 +41,6 @@ Agree training settings before final test evaluation. For example:
 python train.py --grader previousStudent --epochs 50 --output-dir runs/previousStudent --evaluate-test
 python train.py --grader shane --epochs 50 --output-dir runs/shane --evaluate-test
 ```
-
-The default image batch size is four (36 patches). Reduce memory use with `--batch-size 1` in both runs. The optimiser and CNN hidden layers retain the supplied approach; the output is changed to five logits, without sigmoid. Training uses nine 256×256 grayscale patches from each resized 768×768 image, created after splitting, with random horizontal flips in training. This assumes each patch can inherit the whole image's grade; assess this assumption when interpreting results.
-
-Validation and test predictions average the nine patch probability vectors into one image prediction. Early stopping uses image-level validation loss. Class weighting is disabled by default; `--class-weighting balanced` computes training-only weights in grade order. If enabled, both runs should use that setting, although the resulting weights depend on each grader's label distribution.
-
-Outputs include the best checkpoint, run configuration and manifest hash, learning curve, validation metrics, and (with `--evaluate-test`) VISUSS image predictions, five-by-five confusion matrices and grade metrics. Test metrics include exact accuracy, within-one-grade accuracy, mean absolute error and quadratic weighted kappa.
-
-Each model is evaluated against BOTH graders' VISUSS labels. This makes cross-grader comparisons possible but neither grader is an independent reference standard. Do not claim one model is more accurate solely because it matches its own training grader better. A shared independent test grading is needed for that claim. The 39 disagreement cases are a selected difficult-case sample rather than an unbiased test set.
-
-Seeds are fixed for both runs; exact reproducibility across hardware is not guaranteed. Fresh output directories are required so runs cannot overwrite one another. Local datasets, manifests, outputs and checkpoints are excluded by `.gitignore`.
 
 ## Verification
 
