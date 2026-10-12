@@ -2,15 +2,13 @@
 
 Adapted from the supplied ds-auto-qc CNN. Two runs use the same actual image files and the same patient split; only the training grader changes. Grades 1–5 map internally to class indices 0–4.
 
-The `project` field must contain the exact trial name VISUSS, ignoring case. If not, the script lists the available trial names and stops. It uses patient and site metadata from the previous student's CSV. Existing `mode` values are replaced by the requested trial/patient split.
-
 The script matches the full filename stem, preserving image variants. It defaults to PNG files. If your folder contains only TIFFs, explicitly pass `--image-extension .tif`; both graders will then use the same TIFF file for a matched identifier. Confirm that corresponding PNG and TIFF files represent the same image content before using their labels interchangeably. Duplicate stems and missing images cause errors.
 
-- Test: matched images from VISUSS.
+- Test: matched images from VISUS-NHP.
 - Validation: approximately 20% of the remaining patients.
 - Training: the remaining patients.
 
-Both eyes, visits and image variants stay together by `patient_id`. Any non-VISUSS images belonging to a VISUSS patient are excluded. All VISUSS patients from the previous student's CSV are protected, including patients without matched images.
+Both eyes, visits and image variants stay together by `patient_id`. Any non-VISUS images belonging to a VISUS patient are excluded. All VISUS patients from the previous student's CSV are protected, including patients without matched images.
 
 ## Full runs
 
