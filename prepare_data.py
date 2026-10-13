@@ -58,13 +58,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--previous-student", type=Path, required=True)
     parser.add_argument("--shane", type=Path, required=True)
-    parser.add_argument("--image-dir", type=Path, default=Path("/Users/shanethomas/Desktop/images"))
-    parser.add_argument("--held-out", default="VISUSS")
+    parser.add_argument("--image-dir", type=Path, required=True)
+    parser.add_argument("--held-out", default="VISUS-NHP")
+    parser.add_argument("--split-file", type=Path, help="Existing manifest or label CSV with patient_id and split/mode")
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--image-extension", default=".png")
     parser.add_argument("--output-dir", type=Path, default=Path("prepared"))
     args = parser.parse_args()
+    for filename in ('manifest.csv', 'split_report.json'):
+        if (args.output_dir / filename).exists():
+            raise FileExistsError(f'{args.output_dir / filename} already exists; reuse the manifest or choose another output directory')
     if not 0 < args.val_fraction < 1:
         parser.error("--val-fraction must be between 0 and 1")
     if not args.image_dir.is_dir():
@@ -112,9 +116,39 @@ def main():
     if not any(row["split"] == "test" for row in rows):
         raise ValueError("No matched images from the held-out trial; cannot compare the two runs on this trial")
     pool = [row for row in rows if row["split"] != "test"]
-    validation = choose_validation(pool, args.val_fraction, args.seed)
-    for row in pool:
-        row["split"] = "validation" if row["patient_id"] in validation else "train"
+    split_path = args.split_file or args.previous_student
+    with split_path.open(encoding="utf-8-sig", newline="") as handle:
+        saved = list(csv.DictReader(handle))
+    assignments = {}
+    invalid = []
+    for row in saved:
+        patient = row.get("patient_id", "").strip()
+        mode = row.get("split", row.get("mode", "")).strip()
+        mode = "validation" if mode == "val" else mode
+        if not patient or mode not in {"train", "validation", "test"}:
+            invalid.append("missing patient or invalid split")
+        elif patient in assignments and assignments[patient] != mode:
+            invalid.append("patient spans multiple splits")
+        else:
+            assignments[patient] = mode
+    if any(assignments.get(patient) != "test" for patient in test_patients):
+        invalid.append("held-out trial patients are not all test")
+    if any(row["patient_id"] not in assignments for row in rows):
+        invalid.append("split does not cover matched patients")
+    if not all(any(assignments.get(row["patient_id"]) == mode for row in pool)
+               for mode in ("train", "validation")):
+        invalid.append("empty training or validation set")
+    if invalid:
+        if args.split_file:
+            raise ValueError(f"Invalid saved split {split_path}: {sorted(set(invalid))}")
+        print(f"Existing split cannot be reused: {sorted(set(invalid))}; creating shared patient split")
+        validation = choose_validation(pool, args.val_fraction, args.seed)
+        for row in pool:
+            row["split"] = "validation" if row["patient_id"] in validation else "train"
+    else:
+        print(f"Reusing patient split: {split_path}")
+        for row in pool:
+            row["split"] = assignments[row["patient_id"]]
     groups = {split: {row["patient_id"] for row in rows if row["split"] == split} for split in ("train", "validation", "test")}
     assert not groups["train"] & groups["validation"]
     assert not (groups["train"] | groups["validation"]) & groups["test"]
@@ -129,6 +163,7 @@ def main():
     report = {
         "held_out_project": args.held_out,
         "seed": args.seed,
+        "reused_split": str(split_path.resolve()) if not invalid else None,
         "validation_patient_fraction_requested": args.val_fraction,
         "previousStudent_only_ids": sorted(previousStudent.keys() - shane.keys()),
         "shane_only_ids": sorted(shane.keys() - previousStudent.keys()),
