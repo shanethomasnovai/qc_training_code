@@ -11,6 +11,7 @@ from torchvision import transforms
 from dataset import ImageQualityDataset
 from model import IQAnet
 from soft_labels import TARGET_COLUMNS, construct_targets
+from distribution_metrics import calculate_distribution_metrics
 
 
 def image_transform():
@@ -60,7 +61,44 @@ def calculate_validation_metrics(reference, predicted):
     return metrics, per_grade, pd.DataFrame(cm, index=range(1, 6), columns=range(1, 6))
 
 
-def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch_size=16, grader_columns=None):
+def calculate_combined_metrics(reference, probabilities, grader_columns):
+    rated = construct_targets(reference.reset_index(drop=True), grader_columns)
+    if not rated.has_ratings.all():
+        raise ValueError('Combined metrics require at least one selected rating per image')
+    targets = reference[TARGET_COLUMNS].to_numpy() if set(TARGET_COLUMNS).issubset(reference.columns) else rated[TARGET_COLUMNS].to_numpy()
+    metrics, details = calculate_distribution_metrics(targets, probabilities)
+    if not np.allclose(targets, rated[TARGET_COLUMNS].to_numpy(), rtol=0, atol=1e-8):
+        raise ValueError('Soft targets disagree with selected original ratings')
+    ratings = rated[grader_columns].apply(pd.to_numeric, errors='coerce').to_numpy(dtype=float)
+    votes = np.stack([(ratings == grade).sum(axis=1) for grade in range(1, 6)], axis=1)
+    winners = votes == votes.max(axis=1, keepdims=True)
+    reference_grade = votes.argmax(axis=1) + 1
+    predicted = np.asarray(probabilities).argmax(axis=1) + 1
+    tied = winners.sum(axis=1) > 1
+    matches_any = votes[np.arange(len(votes)), predicted - 1] > 0
+    errors = np.abs(reference_grade - predicted)
+    consensus, _, _ = calculate_validation_metrics(reference_grade, predicted)
+    metrics.update({
+        'matches_any_grader_accuracy': float(matches_any.mean()),
+        'consensus_reference_exact_accuracy': consensus['exact_accuracy'],
+        'consensus_reference_mae': consensus['mean_absolute_grade_error'],
+        'consensus_reference_quadratic_weighted_kappa': consensus['quadratic_weighted_kappa'],
+        'consensus_reference_quadratic_weighted_kappa_undefined_reason': consensus['quadratic_weighted_kappa_undefined_reason'],
+        'reference_tie_count': int(tied.sum()),
+        'reference_tie_percentage': float(tied.mean() * 100),
+        'single_grade_reference_convention': 'Reference grades are the most frequent available grader rating; ties are resolved in favour of the lower grade.',
+    })
+    details['predicted_grade'] = predicted
+    details['consensus_reference_grade'] = reference_grade
+    details['reference_tied'] = tied
+    details['rating_count'] = rated.rating_count.to_numpy()
+    details['matches_any_grader'] = matches_any
+    details['consensus_exact_match'] = errors == 0
+    details['absolute_grade_error'] = errors
+    return metrics, details
+
+
+def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch_size=16, grader_columns=None, class_weights=None):
     """Average nine patch softmax probabilities, preserving each image's row ID."""
     soft = grader == 'soft'
     if grader not in ('previousStudent', 'shane', 'soft') or batch_size < 1:
@@ -90,7 +128,8 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
     output_dir = Path(output_dir)
     filenames = ['validation_metrics.json', 'validation_per_grade_metrics.csv',
                  'validation_confusion_matrix.csv', 'validation_predictions.csv']
-    for filename in filenames:
+    distribution_files = ['distribution_metrics.json', 'distribution_per_image.csv'] if soft else []
+    for filename in filenames + distribution_files:
         if (output_dir / filename).exists():
             raise FileExistsError(f'{output_dir / filename} already exists; preserving existing results')
     val['image_filename'] = val.image_path
@@ -160,10 +199,30 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
         cm = pd.concat(matrices, ignore_index=True)
         probabilities = predictions[[f'probability_grade_{i}' for i in range(1, 6)]].to_numpy()
         targets = predictions[TARGET_COLUMNS].to_numpy()
+        distribution_metrics, distribution_details = calculate_combined_metrics(val, probabilities, grader_columns)
+        distribution_metrics.update({'grader_columns': grader_columns, 'split': 'validation'})
+        distribution_details.insert(0, 'image_id', predictions.image_id.to_numpy())
+        for column in distribution_details.columns:
+            if column != 'image_id':
+                predictions[column] = distribution_details[column].to_numpy()
+        for column in grader_columns + TARGET_COLUMNS + [f'probability_grade_{i}' for i in range(1, 6)]:
+            distribution_details[column] = predictions[column].to_numpy()
+        metrics.update(distribution_metrics)
         metrics.update({'image_count': len(predictions),
-                        'soft_cross_entropy': float(-(targets * np.log(np.maximum(probabilities, np.finfo(np.float32).tiny))).sum(1).mean()),
+                        'soft_cross_entropy': distribution_metrics['soft_cross_entropy'],
+                        'earth_movers_distance': distribution_metrics['earth_movers_distance'],
+                        'earth_movers_distance_units': 'grade steps (0-4); lower is better',
                         'loss': 'unweighted cross-entropy of mean patch probabilities',
                         'grader_columns': grader_columns})
+        if class_weights is not None:
+            weights = np.asarray(class_weights, dtype=float)
+            if weights.shape != (5,) or not np.isfinite(weights).all() or (weights <= 0).any():
+                raise ValueError('Expected five finite positive class weights')
+            scored_targets = targets / targets.sum(1, keepdims=True)
+            scored_probabilities = probabilities.astype(float) / probabilities.astype(float).sum(1, keepdims=True)
+            metrics.update({'weighted_soft_cross_entropy': float(-(scored_targets * weights * np.log(np.maximum(scored_probabilities, np.finfo(np.float32).tiny))).sum(1).mean()),
+                            'class_weights': weights.tolist(), 'weighted_loss_reduction': 'mean over images',
+                            'weighted_loss': 'class-weighted cross-entropy of mean patch probabilities'})
     else:
         metrics, per_grade, cm = calculate_validation_metrics(predictions.reference_grade, predictions.predicted_grade)
     metrics.update({'grader': grader, 'split': 'validation', 'patches_per_image': 9,
@@ -180,7 +239,18 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
         cm.columns = [f'predicted_grade_{grade}' for grade in range(1, 6)]
         cm.to_csv(output_dir / filenames[2])
     (output_dir / filenames[0]).write_text(json.dumps(metrics, indent=2, allow_nan=False), encoding='utf-8')
+    if soft:
+        (output_dir / distribution_files[0]).write_text(json.dumps(distribution_metrics, indent=2, allow_nan=False), encoding='utf-8')
+        distribution_details.to_csv(output_dir / distribution_files[1], index=False)
     print('\nWhole-image validation (best saved checkpoint):')
+    if soft:
+        print(f"  earth_movers_distance (grade steps): {metrics['earth_movers_distance']:.6f}")
+        print(f"  soft_cross_entropy (unweighted): {metrics['soft_cross_entropy']:.6f}")
+        for key in ('matches_any_grader_accuracy', 'consensus_reference_exact_accuracy',
+                    'consensus_reference_mae', 'consensus_reference_quadratic_weighted_kappa'):
+            value = metrics[key]
+            print(f'  {key}: {value:.6f}' if value is not None else f'  {key}: undefined (zero expected disagreement)')
+        print(f"  Reference ties: {metrics['reference_tie_count']}/{metrics['image_count']} ({metrics['reference_tie_percentage']:.2f}%)")
     for key in ('exact_accuracy', 'within_one_grade_accuracy', 'mean_absolute_grade_error',
                 'quadratic_weighted_kappa', 'macro_f1', 'weighted_f1'):
         if soft:
@@ -212,14 +282,16 @@ def evaluate_saved_run(run_dir, grader=None, device=None, batch_size=None):
     model.load_state_dict(torch.load(run_dir / 'model.pth', map_location='cpu', weights_only=True))
     print(f'Loading best saved checkpoint: {run_dir / "model.pth"}')
     columns = None
+    class_weights = None
     manifest = run_dir / params.get('dataset_manifest', 'manifest.csv')
     if grader == 'soft':
         config = json.loads((run_dir / 'run_config.json').read_text(encoding='utf-8'))
         columns = config['grader_columns']
+        class_weights = config.get('effective_class_weights_float32', config.get('class_weights'))
         manifest = run_dir / 'targets.csv'
     return evaluate_validation(model, manifest, grader, run_dir,
                                device=device, batch_size=int(params['batch_size']) if batch_size is None else batch_size,
-                               grader_columns=columns)
+                               grader_columns=columns, class_weights=class_weights)
 
 
 if __name__ == '__main__':

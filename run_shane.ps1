@@ -8,6 +8,9 @@ param(
     [string]$RatingsSheet = 'Grades',
     [switch]$ExcludeKnownUnmatched,
     [switch]$CheckOnly,
+    [string]$ClassWeightsFrom,
+    [ValidateSet('previousStudent', 'shane')]
+    [string]$WeightReferenceGrader,
     [ValidateRange(1, 100000)]
     [int]$Epochs = 50,
     [ValidateRange(1, 100000)]
@@ -53,7 +56,9 @@ if ($Grader -eq 'soft') {
     $trainingArguments += @('--ratings_sheet', $RatingsSheet)
     if ($ExcludeKnownUnmatched) { $trainingArguments += '--exclude_known_unmatched' }
     if ($GraderColumns) { $trainingArguments += @('--grader_columns') + $GraderColumns }
-} elseif ($RatingsCsvPath -or $GraderColumns) {
+    if ($ClassWeightsFrom) { $trainingArguments += @('--class_weights_from', $ClassWeightsFrom) }
+    if ($WeightReferenceGrader) { $trainingArguments += @('--weight_reference_grader', $WeightReferenceGrader) }
+} elseif ($RatingsCsvPath -or $GraderColumns -or $ClassWeightsFrom -or $WeightReferenceGrader) {
     throw 'Ratings options require -Grader soft'
 }
 if ($CheckOnly) { $trainingArguments += '--check_only' }

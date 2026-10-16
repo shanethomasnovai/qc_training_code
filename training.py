@@ -5,6 +5,7 @@ import shutil
 import copy
 import random
 import json
+import hashlib
 import numpy as np
 from pathlib import Path
 import torch
@@ -19,9 +20,42 @@ from dataset import ImageQualityDataset, subsample_subimages
 from utils import get_class_counts
 from validation import evaluate_saved_run
 from soft_labels import TARGET_COLUMNS, load_soft_manifest, sha256
+from class_weights import baseline_class_weights
 
 
 def class_balance(train_loader, val_loader):
+    loaders = (train_loader, val_loader)
+    generators = {loader.generator for loader in loaders if loader.generator is not None}
+    states = {generator: generator.get_state() for generator in generators}
+    try:
+        with torch.random.fork_rng(devices=[]):
+            return _class_balance(train_loader, val_loader)
+    finally:
+        for generator, state in states.items():
+            generator.set_state(state)
+
+
+def make_loaders(train_dataset, val_dataset, batch_size, seed):
+    return (DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                       generator=torch.Generator().manual_seed(seed)),
+            DataLoader(val_dataset, batch_size=batch_size,
+                       generator=torch.Generator().manual_seed(seed + 1)))
+
+
+def initialise_model(seed, batch_normalization=False, output_sigmoid=False):
+    torch.manual_seed(seed)
+    return IQAnet(num_classes=5, batch_normalization=batch_normalization, output_sigmoid=output_sigmoid)
+
+
+def model_fingerprint(model):
+    digest = hashlib.sha256()
+    for name, tensor in model.state_dict().items():
+        digest.update(name.encode('utf-8'))
+        digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _class_balance(train_loader, val_loader):
     set_class_weights = {'Training': None, 'Validation': None}
 
     for loader_label, loader in zip(['Training', 'Validation'], [train_loader, val_loader]):
@@ -126,7 +160,9 @@ def save_model(
     shutil.copy(dataset_file, os.path.join(model_dir, os.path.basename(dataset_file)))
     settings = vars(args).copy()
     settings.update({'loss': 'CrossEntropyLoss', 'class_weights': args.class_weights,
-                     'class_weight_mode': 'none' if args.grader == 'soft' else 'inverse_training_frequency',
+                     'class_weight_mode': ('baseline' if args.class_weights_from else 'none') if args.grader == 'soft' else 'inverse_training_frequency',
+                     'loss_reduction': 'mean',
+                     'loss_mean_denominator': 'batch_size' if args.grader == 'soft' else 'sum of target class weights in batch',
                      'manifest_sha256': sha256(dataset_file), 'num_classes': 5,
                      'patches_per_image': 9, 'training_horizontal_flip': True,
                      'torch_version': torch.__version__, 'numpy_version': np.__version__})
@@ -234,6 +270,8 @@ def main():
     parser.add_argument('--ratings_sheet', default='Grades', help='Worksheet for .xlsx ratings')
     parser.add_argument('--exclude_known_unmatched', action='store_true', help='Explicitly exclude only IDs recorded as unmatched in the saved split_report.json')
     parser.add_argument('--check_only', action='store_true', help='Validate inputs and targets without decoding images or training')
+    parser.add_argument('--class_weights_from', help='Soft mode: hard-label baseline run directory supplying the five class weights; omit for unweighted')
+    parser.add_argument('--weight_reference_grader', choices=['previousStudent', 'shane'], help='Required if the weight baseline has no saved grader metadata')
   
     args = parser.parse_args()
     if args.epochs < 1:
@@ -244,6 +282,10 @@ def main():
         parser.error('--grader soft requires --ratings_csv_path')
     if args.grader != 'soft' and (args.ratings_csv_path or args.grader_columns or args.exclude_known_unmatched):
         parser.error('Ratings options require --grader soft')
+    if args.grader != 'soft' and (args.class_weights_from or args.weight_reference_grader):
+        parser.error('Baseline weight options require --grader soft')
+    if args.weight_reference_grader and not args.class_weights_from:
+        parser.error('--weight_reference_grader requires --class_weights_from')
     if args.model_name is None:
         args.model_name = f'Auto_qc_{args.grader}_{args.optimizer}_seed_{args.seed}'
     if Path(args.output_dir, args.model_name).exists():
@@ -268,7 +310,7 @@ def main():
             args.dataset_csv_path, args.ratings_csv_path, args.grader_columns,
             sheet=args.ratings_sheet, exclude_known_unmatched=args.exclude_known_unmatched)
         args.target_table = df.copy()
-        print(f'Selected grader columns: {args.grader_columns}; loss: unweighted cross-entropy')
+        print(f'Selected grader columns: {args.grader_columns}')
     else:
         df = pd.read_csv(args.dataset_csv_path)
     required = {'image_path', 'patient_id', 'project', 'split', 'previousStudent_grade', 'shane_grade'}
@@ -292,6 +334,14 @@ def main():
         raise ValueError('Empty train or validation split')
     if not df['image_path'].map(lambda path: Path(path).is_file()).all():
         raise ValueError('Manifest image files are missing')
+    train_class_weights = None
+    args.class_weight_source = {'method': 'none'}
+    if args.class_weights_from:
+        train_class_weights, args.class_weight_source = baseline_class_weights(
+            args.class_weights_from, args.weight_reference_grader, args.dataset_csv_path)
+        print(f'Baseline class weights (grades 1-5): {train_class_weights}; source: {args.class_weight_source}')
+    elif args.grader == 'soft':
+        print('Unweighted soft-label cross-entropy; reduction=mean (over patches)')
     if args.check_only:
         print('Input and split checks passed; no training performed.')
         return
@@ -328,24 +378,21 @@ def main():
         ))
 
     # data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True
-    )
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
+    train_loader, val_loader = make_loaders(train_dataset, val_dataset, args.batch_size, args.seed)
 
     print(f"\nOriginal Dataset size: {len(dataset)}, Patched Dataset size: {len(patched_dataset)}")
     print(f"\nTrain patches: {len(train_dataset)}, Val patches: {len(val_dataset)}; held-out test images: {test_image_count} (not loaded)")
     print(f"\nImage size (H, W): {patched_dataset[0][0].shape[1:]}")
 
-    train_class_weights = None
     if args.grader != 'soft':
         train_class_weights, _ = class_balance(train_loader, val_loader)
         missing = set(range(5)) - set(train_class_weights)
         if missing:
             raise ValueError(f'No training examples for grades {[index + 1 for index in sorted(missing)]}')
         train_class_weights = [train_class_weights[index] for index in range(5)]
+        args.class_weight_source = {'method': 'inverse training frequency', 'reference_grader': args.grader,
+                                    'manifest_sha256': sha256(args.dataset_csv_path),
+                                    'formula': 'N_train_patches / (5 * training_patch_count_for_grade)'}
     args.class_weights = train_class_weights
 
     num_classes = 5
@@ -354,11 +401,10 @@ def main():
     epoch_df = pd.DataFrame()
 
     # Initialize the model
-    model = IQAnet(
-        num_classes=num_classes,
-        batch_normalization=args.batch_normalization,
-        output_sigmoid=args.output_sigmoid
-    )
+    model = initialise_model(args.seed, args.batch_normalization, args.output_sigmoid)
+    args.initial_model_sha256 = model_fingerprint(model)
+    args.randomness = {'policy': 'separate loader generators; reset seed immediately before model initialisation; RNG-neutral class counting',
+                       'model_seed': args.seed, 'training_loader_seed': args.seed, 'validation_loader_seed': args.seed + 1}
     model.to(device)
     args.model_settings = str(model)
     args.preprocessing = {'resize': [768, 768], 'grayscale_channels': 1,
@@ -367,9 +413,10 @@ def main():
     # Define loss function and optimizer
     weight_tensor = (torch.tensor(train_class_weights, dtype=torch.float32).to(device)
                      if train_class_weights is not None else None)
+    args.effective_class_weights_float32 = weight_tensor.detach().cpu().tolist() if weight_tensor is not None else None
     print(f"\nUsing class weights: {weight_tensor}")
 
-    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    criterion = nn.CrossEntropyLoss(weight=weight_tensor, reduction='mean')
 
     if args.optimizer.lower() == 'sgd':
         optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)

@@ -136,8 +136,12 @@ class SoftLabelChecks(unittest.TestCase):
             labels.to_csv(ratings, index=False)
             argv = ['training.py', '--grader', 'soft', '--dataset_csv_path', str(manifest),
                     '--ratings_csv_path', str(ratings), '--output_dir', str(folder), '--epochs', '1']
+            expected_weights = None
             def fake_train(model, train_loader, val_loader, criterion, optimizer, device):
-                self.assertIsNone(criterion.weight)
+                if expected_weights is None:
+                    self.assertIsNone(criterion.weight)
+                else:
+                    torch.testing.assert_close(criterion.weight.cpu(), torch.tensor(expected_weights))
                 for loader in (train_loader, val_loader):
                     _, targets = next(iter(loader))
                     self.assertEqual(targets.shape[1], 5)
@@ -159,6 +163,28 @@ class SoftLabelChecks(unittest.TestCase):
             predictions = pd.read_csv(run / 'validation_predictions.csv')
             self.assertEqual(predictions.rating_count.tolist(), [1])
             self.assertEqual(predictions.target_grade_2.tolist(), [1.])
+            self.assertEqual(predictions.consensus_reference_grade.tolist(), [2])
+            self.assertEqual(predictions.reference_tied.tolist(), [False])
+            self.assertIn('matches_any_grader_accuracy', metrics)
+            self.assertEqual(metrics['reference_tie_percentage'], 0.)
+            baseline = folder / 'baseline'
+            baseline.mkdir()
+            base.to_csv(baseline / 'manifest.csv', index=False)
+            pd.DataFrame([{'grader': 'previousStudent', 'dataset_manifest': 'manifest.csv'}]).to_csv(baseline / 'model_params.csv', index=False)
+            expected_weights = [1., 2., 3., 4., 5.]
+            (baseline / 'run_config.json').write_text(json.dumps({'grader': 'previousStudent', 'class_weights': expected_weights}))
+            weighted_argv = argv + ['--class_weights_from', str(baseline), '--model_name', 'weighted_check']
+            with patch('sys.argv', weighted_argv), patch.object(training, 'train', side_effect=fake_train), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                training.main()
+            weighted_config = json.loads((folder / 'weighted_check/run_config.json').read_text())
+            self.assertEqual(weighted_config['class_weights'], expected_weights)
+            self.assertEqual(weighted_config['class_weight_source']['method'], 'saved run_config.json class_weights')
+            self.assertEqual(weighted_config['loss_reduction'], 'mean')
+            self.assertEqual(weighted_config['loss_mean_denominator'], 'batch_size')
+            self.assertEqual(weighted_config['initial_model_sha256'], config['initial_model_sha256'])
+            weighted_metrics = json.loads((folder / 'weighted_check/validation_metrics.json').read_text())
+            self.assertAlmostEqual(weighted_metrics['weighted_soft_cross_entropy'], 2 * weighted_metrics['soft_cross_entropy'])
             # Saved targets remain independent of later input edits.
             ratings.write_text('changed')
             with self.assertRaises(FileExistsError):
