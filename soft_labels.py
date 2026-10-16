@@ -97,6 +97,13 @@ def construct_targets(df, columns):
     return result
 
 
+def construct_continuous_targets(df, columns):
+    result = construct_targets(df, columns)
+    ratings = result[columns].apply(pd.to_numeric, errors='coerce')
+    result['continuous_target'] = ratings.sum(axis=1).div(result.rating_count.where(result.has_ratings))
+    return result
+
+
 def load_soft_manifest(manifest, ratings_path, columns=None, check_files=True, sheet='Grades', exclude_known_unmatched=False):
     base = read_table(manifest)
     validate_manifest(base, check_files=check_files)

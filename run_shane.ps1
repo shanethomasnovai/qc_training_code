@@ -8,6 +8,9 @@ param(
     [string]$RatingsSheet = 'Grades',
     [switch]$ExcludeKnownUnmatched,
     [switch]$CheckOnly,
+    [ValidateSet('cross_entropy', 'continuous_cdw_ce')]
+    [string]$Loss = 'cross_entropy',
+    [double]$Alpha = 1.0,
     [string]$ClassWeightsFrom,
     [ValidateSet('previousStudent', 'shane')]
     [string]$WeightReferenceGrader,
@@ -35,11 +38,14 @@ foreach ($requiredPath in @($pythonPath, $trainingPath, $manifestPath)) {
 }
 
 # Unique names preserve earlier runs, including one-epoch checks.
-$runName = $Grader + '_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+$runPrefix = if ($Loss -eq 'continuous_cdw_ce') { 'continuous_cdw_ce' } else { $Grader }
+$runName = $runPrefix + '_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $trainingArguments = @(
     $trainingPath,
     '--dataset_csv_path', $manifestPath,
     '--grader', $Grader,
+    '--loss', $Loss,
+    '--alpha', $Alpha.ToString([System.Globalization.CultureInfo]::InvariantCulture),
     '--output_dir', $runsPath,
     '--model_name', $runName,
     '--epochs', $Epochs.ToString(),

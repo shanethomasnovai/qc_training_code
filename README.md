@@ -1,5 +1,102 @@
 # Multiclass AutoQC with single-grader and soft-label training
 
+## Continuous CDW-CE experiment
+
+Select `--grader soft --loss continuous_cdw_ce --alpha 1.0` to reuse the
+combined-grader loader with the supervisor's continuous-target loss. The default
+remains `--loss cross_entropy`; existing single-grader and weighted soft-label
+commands still work. `alpha` must be finite and positive. CDW-CE rejects
+`--class_weights_from` and `--weight_reference_grader`: its distance weights
+are not class-balancing weights.
+
+Each training image uses the unrounded arithmetic mean of its available selected
+integer ratings, on the original 1-5 scale. For example, 2/3/3 gives 8/3,
+2/blank/3 gives 2.5, and a lone 4 gives 4. Missing ratings are ignored; two-grader
+images remain eligible. Completely unrated images follow the existing exclusion
+policy and remain in the snapshot. `targets.csv` preserves individual ratings,
+five-class vote fractions, rating counts, splits and `continuous_target` (blank
+for unrated images). Dataset targets are scalar float32 values and move to the
+logits' device in the existing training loop. There is no rating-count weighting.
+
+The implemented loss is exactly the supplied expression:
+`mean_i sum_c -abs(c - mean_rating_i)**alpha * log(clamp(1 - softmax(logits)_ic, min=1e-7))`,
+for grades `c=1..5`. Five raw logits enter the function; no extra CE term,
+regression head or CORAL boundaries are added. Inputs must have shapes `[B, 5]`
+and `[B]`, be finite floating-point tensors on the same device, with targets in
+1-5. The clamp is retained, including its saturation behaviour: extremely
+confident predictions can have a finite capped penalty but zero gradients. For
+example `[1000, -1000, -1000, -1000, -1000]`, target 5 and alpha 1 yields
+`-4 * log(1e-7)` (about 64.4724) with zero gradient. No stabilised alternative
+is substituted. Very large positive alpha can overflow distance powers in the
+selected floating-point dtype; choose alpha deliberately.
+
+The same CDW-CE objective controls training and patch validation. Lowest patch
+validation loss still selects the best checkpoint. Architecture, initialisation
+policy, transforms, nine patches, training flips, patient splits, VISUS-NHP
+holdout, optimisers, scheduler and stopping procedure are unchanged. Checkpoints
+remain five-logit IQAnet state dictionaries and reload through `validation.py`.
+Run metadata records loss/alpha, target construction, no-class-weights policy,
+selected columns, input/split hashes, initial-model fingerprint and training
+settings. Existing datasets and completed runs are never overwritten.
+
+This experiment changes **targets (vote distributions to mean ratings), loss
+(CE to continuous CDW-CE), and class weighting** relative to the completed
+weighted soft baseline. It does not isolate the loss alone. Raw validation
+losses across these objectives are not directly comparable. Evaluation continues
+to use original ratings/vote distributions for EMD, unweighted soft CE,
+matches-any, and the existing modal-reference exact accuracy, MAE and QWK with
+lower-grade tie-breaking. It never uses a rounded mean as an evaluation label.
+
+Use the completed soft baseline's frozen input copy to keep the panel unchanged.
+From this project directory in PowerShell:
+
+```powershell
+$cdwArgs = @('--dataset_csv_path', '.\prepared_visus_nhp\manifest.csv', '--grader', 'soft', '--loss', 'continuous_cdw_ce', '--alpha', '1.0', '--ratings_csv_path', '.\runs\soft_20261016_122507_325_f156d443\ratings_input.xlsx', '--exclude_known_unmatched', '--output_dir', '.\runs', '--model_name', 'continuous_cdw_ce_alpha1_seed42', '--epochs', '50', '--batch_size', '16', '--learning_rate', '0.001', '--optimizer', 'AdamW', '--patience', '10', '--seed', '42', '--reduce_lr')
+```
+
+Short input/target check, without training or creating a run:
+
+```powershell
+.\.venv\Scripts\python.exe .\training.py @cdwArgs --check_only
+```
+
+Full run (choose a fresh `--model_name` if it already exists):
+
+```powershell
+.\.venv\Scripts\python.exe .\training.py @cdwArgs
+```
+
+The launcher supports `-Grader soft -Loss continuous_cdw_ce -Alpha 1.0` and
+generates unique run names:
+
+```powershell
+.\run_shane.ps1 -Grader soft -Loss continuous_cdw_ce -Alpha 1.0 -RatingsCsvPath '.\runs\soft_20261016_122507_325_f156d443\ratings_input.xlsx' -ExcludeKnownUnmatched -CheckOnly
+.\run_shane.ps1 -Grader soft -Loss continuous_cdw_ce -Alpha 1.0 -RatingsCsvPath '.\runs\soft_20261016_122507_325_f156d443\ratings_input.xlsx' -ExcludeKnownUnmatched -Epochs 50
+```
+
+Use the direct Python commands if PowerShell policy blocks scripts. The launcher
+uses the same path conventions as before. Once the named CDW-CE run completes,
+compare saved predictions against the **original soft run's exact snapshot**:
+
+```powershell
+.\.venv\Scripts\python.exe .\score_distributions.py --reference-run .\runs\soft_20261016_122507_325_f156d443 --run-dir .\runs\previousStudent_20261013_130615_231_f9f4cb56 .\runs\shane_20261013_121344_539_933fb0f3 .\runs\soft_20261016_122507_325_f156d443 .\runs\continuous_cdw_ce_alpha1_seed42 --output-dir .\runs\continuous_cdw_ce_comparison
+```
+
+Focused verification, not a full training experiment:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest test_continuous_cdw_ce test_setup test_validation test_soft_labels test_weighted_training test_distribution_metrics -v
+```
+
+Checks cover mean targets/missing ratings, scale, exact supplied formula and
+gradients, extreme-logit saturation, alpha/weight rejection, loss dispatch,
+save/reload, identical initialisation, unchanged evaluation/splits and existing
+CE modes. A real-image smoke check performs one two-patch optimizer update and
+one separate validation-image batch; it writes no run files. It is skipped if
+the local private ratings snapshot is unavailable. Other local-data regression
+checks need the existing manifest, images and baseline run metadata. Synthetic
+fixtures exercise the supplied loss and save/reload path without private data.
+
 ## Combined-reference validation
 
 New soft-label runs automatically report these whole-image metrics together

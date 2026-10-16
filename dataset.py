@@ -12,13 +12,16 @@ from torchvision.transforms import ToPILImage
 
 
 class ImageQualityDataset(Dataset):
-    def __init__(self, data, transform=None, label_mapping=None, base_image_dir=None, target_columns=None):
+    def __init__(self, data, transform=None, label_mapping=None, base_image_dir=None, target_columns=None, scalar_target_column=None):
         self.transform = transform
         self.target_columns = target_columns
+        self.scalar_target_column = scalar_target_column
+        if target_columns and scalar_target_column:
+            raise ValueError('Choose probability targets or a scalar target, not both')
         self.data = [pd.read_csv(data) if isinstance(data, str) else data][0]
         if label_mapping is not None:
             self.label_mapping = label_mapping
-        elif not target_columns:
+        elif not target_columns and not scalar_target_column:
             self._set_label_mapping()
 
         self.base_image_dir = base_image_dir
@@ -37,8 +40,11 @@ class ImageQualityDataset(Dataset):
         image_path = self.data.loc[idx, 'image_filename']
         if self.base_image_dir:
             image_path = os.path.join(self.base_image_dir, image_path)
-        quality = (self.data.loc[idx, self.target_columns].to_numpy(dtype=np.float32)
-                   if self.target_columns else self.data.loc[idx, 'image_grading'])
+        if self.scalar_target_column:
+            quality = float(self.data.loc[idx, self.scalar_target_column])
+        else:
+            quality = (self.data.loc[idx, self.target_columns].to_numpy(dtype=np.float32)
+                       if self.target_columns else self.data.loc[idx, 'image_grading'])
 
         image = Image.open(image_path)
 
@@ -46,7 +52,7 @@ class ImageQualityDataset(Dataset):
             image = self.transform(image)
 
         # define label index
-        if self.target_columns:
+        if self.target_columns or self.scalar_target_column:
             return image, torch.tensor(quality, dtype=torch.float32)
         quality = self.label_mapping[quality]
 

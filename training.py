@@ -19,8 +19,9 @@ from model import IQAnet
 from dataset import ImageQualityDataset, subsample_subimages
 from utils import get_class_counts
 from validation import evaluate_saved_run
-from soft_labels import TARGET_COLUMNS, load_soft_manifest, sha256
+from soft_labels import TARGET_COLUMNS, construct_continuous_targets, load_soft_manifest, sha256
 from class_weights import baseline_class_weights
+from losses import make_criterion, validate_alpha
 
 
 def class_balance(train_loader, val_loader):
@@ -159,7 +160,8 @@ def save_model(
 
     shutil.copy(dataset_file, os.path.join(model_dir, os.path.basename(dataset_file)))
     settings = vars(args).copy()
-    settings.update({'loss': 'CrossEntropyLoss', 'class_weights': args.class_weights,
+    settings.update({'loss': 'continuous_cdw_ce' if args.loss == 'continuous_cdw_ce' else 'CrossEntropyLoss',
+                     'loss_selection': args.loss, 'class_weights': args.class_weights,
                      'class_weight_mode': ('baseline' if args.class_weights_from else 'none') if args.grader == 'soft' else 'inverse_training_frequency',
                      'loss_reduction': 'mean',
                      'loss_mean_denominator': 'batch_size' if args.grader == 'soft' else 'sum of target class weights in batch',
@@ -272,8 +274,21 @@ def main():
     parser.add_argument('--check_only', action='store_true', help='Validate inputs and targets without decoding images or training')
     parser.add_argument('--class_weights_from', help='Soft mode: hard-label baseline run directory supplying the five class weights; omit for unweighted')
     parser.add_argument('--weight_reference_grader', choices=['previousStudent', 'shane'], help='Required if the weight baseline has no saved grader metadata')
+    parser.add_argument('--loss', choices=['cross_entropy', 'continuous_cdw_ce'], default='cross_entropy')
+    parser.add_argument('--alpha', type=float, default=1.0, help='Positive finite distance exponent for continuous_cdw_ce')
   
     args = parser.parse_args()
+    try:
+        validate_alpha(args.alpha)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.loss == 'continuous_cdw_ce':
+        if args.grader != 'soft':
+            parser.error('--loss continuous_cdw_ce requires --grader soft and combined ratings')
+        if args.class_weights_from or args.weight_reference_grader:
+            parser.error('continuous_cdw_ce uses distance weights only; omit class-weight options')
+    elif args.alpha != 1.0:
+        parser.error('--alpha is only configurable with --loss continuous_cdw_ce')
     if args.epochs < 1:
         parser.error('--epochs must be at least 1')
     if args.output_sigmoid:
@@ -287,7 +302,8 @@ def main():
     if args.weight_reference_grader and not args.class_weights_from:
         parser.error('--weight_reference_grader requires --class_weights_from')
     if args.model_name is None:
-        args.model_name = f'Auto_qc_{args.grader}_{args.optimizer}_seed_{args.seed}'
+        loss_suffix = '_continuous_cdw_ce' if args.loss == 'continuous_cdw_ce' else ''
+        args.model_name = f'Auto_qc_{args.grader}{loss_suffix}_{args.optimizer}_seed_{args.seed}'
     if Path(args.output_dir, args.model_name).exists():
         raise FileExistsError('Model output already exists; choose a new --model_name to preserve results')
     random.seed(args.seed)
@@ -309,6 +325,8 @@ def main():
         df, args.grader_columns, args.unrated_counts = load_soft_manifest(
             args.dataset_csv_path, args.ratings_csv_path, args.grader_columns,
             sheet=args.ratings_sheet, exclude_known_unmatched=args.exclude_known_unmatched)
+        if args.loss == 'continuous_cdw_ce':
+            df = construct_continuous_targets(df, args.grader_columns)
         args.target_table = df.copy()
         print(f'Selected grader columns: {args.grader_columns}')
     else:
@@ -341,7 +359,11 @@ def main():
             args.class_weights_from, args.weight_reference_grader, args.dataset_csv_path)
         print(f'Baseline class weights (grades 1-5): {train_class_weights}; source: {args.class_weight_source}')
     elif args.grader == 'soft':
-        print('Unweighted soft-label cross-entropy; reduction=mean (over patches)')
+        print(f'{args.loss}; no class-balancing weights; reduction=mean (over patches)')
+    args.target_construction = ('arithmetic mean of available selected integer ratings; unrounded, 1-5 scale'
+                                if args.loss == 'continuous_cdw_ce' else
+                                'fractions of available selected grader votes in grade order 1-5' if args.grader == 'soft' else
+                                f'{args.grader} integer grade mapped to class index 0-4')
     if args.check_only:
         print('Input and split checks passed; no training performed.')
         return
@@ -357,7 +379,8 @@ def main():
 
     print('Loading dataset...')
     dataset = ImageQualityDataset(df, transform, label_mapping={grade: grade - 1 for grade in range(1, 6)},
-                                  target_columns=TARGET_COLUMNS if args.grader == 'soft' else None)
+                                  target_columns=TARGET_COLUMNS if args.grader == 'soft' and args.loss == 'cross_entropy' else None,
+                                  scalar_target_column='continuous_target' if args.loss == 'continuous_cdw_ce' else None)
 
     print('Patching dataset...')
     patched_dataset, df = subsample_subimages(dataset, method='all', df=df)
@@ -416,7 +439,7 @@ def main():
     args.effective_class_weights_float32 = weight_tensor.detach().cpu().tolist() if weight_tensor is not None else None
     print(f"\nUsing class weights: {weight_tensor}")
 
-    criterion = nn.CrossEntropyLoss(weight=weight_tensor, reduction='mean')
+    criterion = make_criterion(args.loss, weight_tensor, args.alpha)
 
     if args.optimizer.lower() == 'sgd':
         optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
