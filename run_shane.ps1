@@ -1,6 +1,13 @@
 # Run from any directory; inputs are resolved relative to this script.
 [CmdletBinding()]
 param(
+    [ValidateSet('previousStudent', 'shane', 'soft')]
+    [string]$Grader = 'shane',
+    [string]$RatingsCsvPath,
+    [string[]]$GraderColumns,
+    [string]$RatingsSheet = 'Grades',
+    [switch]$ExcludeKnownUnmatched,
+    [switch]$CheckOnly,
     [ValidateRange(1, 100000)]
     [int]$Epochs = 50,
     [ValidateRange(1, 100000)]
@@ -25,11 +32,11 @@ foreach ($requiredPath in @($pythonPath, $trainingPath, $manifestPath)) {
 }
 
 # Unique names preserve earlier runs, including one-epoch checks.
-$runName = 'shane_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+$runName = $Grader + '_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $trainingArguments = @(
     $trainingPath,
     '--dataset_csv_path', $manifestPath,
-    '--grader', 'shane',
+    '--grader', $Grader,
     '--output_dir', $runsPath,
     '--model_name', $runName,
     '--epochs', $Epochs.ToString(),
@@ -40,8 +47,18 @@ $trainingArguments = @(
     '--seed', $Seed.ToString(),
     '--reduce_lr'
 )
+if ($Grader -eq 'soft') {
+    if (-not $RatingsCsvPath) { throw '-Grader soft requires -RatingsCsvPath' }
+    $trainingArguments += @('--ratings_csv_path', $RatingsCsvPath)
+    $trainingArguments += @('--ratings_sheet', $RatingsSheet)
+    if ($ExcludeKnownUnmatched) { $trainingArguments += '--exclude_known_unmatched' }
+    if ($GraderColumns) { $trainingArguments += @('--grader_columns') + $GraderColumns }
+} elseif ($RatingsCsvPath -or $GraderColumns) {
+    throw 'Ratings options require -Grader soft'
+}
+if ($CheckOnly) { $trainingArguments += '--check_only' }
 
-Write-Host "Training Shane labels for up to $Epochs epochs (early stopping patience: $Patience)."
+Write-Host "Training $Grader labels for up to $Epochs epochs (early stopping patience: $Patience)."
 Write-Host "Shared manifest: $manifestPath"
 Write-Host "Output: $(Join-Path $runsPath $runName)"
 Write-Host 'VISUS-NHP remains held out; no test evaluation is performed.'
@@ -51,4 +68,5 @@ if ($LASTEXITCODE -ne 0) {
     throw "Training failed with exit code $LASTEXITCODE."
 }
 
-Write-Host "Finished. Best checkpoint: $(Join-Path $runsPath "$runName\model.pth")"
+if ($CheckOnly) { Write-Host 'Input checks complete; no run created.' }
+else { Write-Host "Finished. Best checkpoint: $(Join-Path $runsPath "$runName\model.pth")" }

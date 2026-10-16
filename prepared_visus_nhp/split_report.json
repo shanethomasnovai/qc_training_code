@@ -1,0 +1,95 @@
+{
+  "held_out_project": "VISUS-NHP",
+  "seed": 42,
+  "reused_split": null,
+  "validation_patient_fraction_requested": 0.2,
+  "previousStudent_only_ids": [],
+  "shane_only_ids": [
+    "VISUS-NHP_KNA_E055_OD_D28_17102022_5.1_0",
+    "VISUS-NHP_KNA_E055_OD_D42_31102022_5.1_0",
+    "VISUS-NHP_KNA_E055_OD_D56_14112022_5.1_0",
+    "VISUS-NHP_KNA_E122_OD_D42_3102022_5.1_0",
+    "VISUS-NHP_KNA_E126_OS_D07_2982022_5.1_0",
+    "VISUS-NHP_KNA_E126_OS_D56_17102022_5.1_0",
+    "VISUS-NHP_KNA_O9835_OD_D14_692022_5.1_0",
+    "VISUS-NHP_KNA_O9835_OS_D07_3082022_5.1_0"
+  ],
+  "excluded_non_test_images_from_test_patients": [],
+  "splits": {
+    "train": {
+      "images": 508,
+      "patients": 78,
+      "grade_counts": {
+        "previousStudent": {
+          "1": 73,
+          "2": 163,
+          "3": 156,
+          "4": 112,
+          "5": 4
+        },
+        "shane": {
+          "1": 56,
+          "2": 176,
+          "3": 181,
+          "4": 87,
+          "5": 8
+        }
+      },
+      "sites": {
+        "ASTELLAS_JPN01": 69,
+        "DARC-P2_GBR01": 395,
+        "ONL1204-GA_AUS02": 21,
+        "ONL1204-GA_AUS11": 6,
+        "ONL1204-GA_NZL01": 17
+      }
+    },
+    "validation": {
+      "images": 127,
+      "patients": 20,
+      "grade_counts": {
+        "previousStudent": {
+          "1": 17,
+          "2": 35,
+          "3": 43,
+          "4": 31,
+          "5": 1
+        },
+        "shane": {
+          "1": 13,
+          "2": 51,
+          "3": 42,
+          "4": 19,
+          "5": 2
+        }
+      },
+      "sites": {
+        "ASTELLAS_JPN01": 29,
+        "DARC-P2_GBR01": 93,
+        "ONL1204-GA_AUS02": 5
+      }
+    },
+    "test": {
+      "images": 26,
+      "patients": 9,
+      "grade_counts": {
+        "previousStudent": {
+          "1": 0,
+          "2": 3,
+          "3": 9,
+          "4": 13,
+          "5": 1
+        },
+        "shane": {
+          "1": 0,
+          "2": 0,
+          "3": 10,
+          "4": 16,
+          "5": 0
+        }
+      },
+      "sites": {
+        "VISUS-NHP_KNA": 26
+      }
+    }
+  }
+}
