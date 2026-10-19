@@ -10,12 +10,13 @@ import numpy as np
 import pandas as pd
 import torch
 
-import training
-from class_weights import baseline_class_weights
-from soft_labels import TARGET_COLUMNS, construct_targets, read_table
+from autoqc import training
+from autoqc.class_weights import baseline_class_weights
+from autoqc.soft_labels import TARGET_COLUMNS, construct_targets, read_table
+from autoqc.utils import get_class_counts
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / 'prepared_visus_nhp/manifest.csv'
 BASELINES = {
     'previousStudent': ROOT / 'runs/previousStudent_20261013_130615_231_f9f4cb56',
@@ -33,10 +34,10 @@ class WeightedTrainingChecks(unittest.TestCase):
             self.assertEqual(source['training_image_counts'], counts)
             # Independently execute the original patch-count formula.
             patches = [(torch.zeros(1), torch.tensor(i)) for i, n in enumerate(counts) for _ in range(n * 18)]
-            loaders = training.make_loaders(patches, patches[:1], 16, 42)
-            with contextlib.redirect_stdout(io.StringIO()):
-                original, _ = training.class_balance(*loaders)
-            torch.testing.assert_close(torch.tensor(values), torch.tensor([original[i] for i in range(5)]), rtol=0, atol=0)
+            loader, _ = training.make_loaders(patches, patches[:1], 16, 42)
+            original_counts = get_class_counts(loader)
+            original = [len(patches) / (5 * original_counts[i]) for i in range(5)]
+            torch.testing.assert_close(torch.tensor(values), torch.tensor(original), rtol=0, atol=0)
         with self.assertRaisesRegex(ValueError, 'weight_reference_grader'):
             baseline_class_weights(BASELINES['shane'])
         with self.assertRaisesRegex(ValueError, 'conflicts'):
@@ -96,16 +97,10 @@ class WeightedTrainingChecks(unittest.TestCase):
         torch.testing.assert_close(soft, soft_sum / len(labels))
         self.assertFalse(torch.isclose(hard, soft))
 
-    def test_counting_is_rng_neutral_and_loader_order_is_independent(self):
+    def test_loader_order_is_independent_of_global_rng_and_validation(self):
         data = [(torch.tensor(i), torch.tensor(i % 5)) for i in range(25)]
         train, val = training.make_loaders(data, data, 4, 42)
         torch.manual_seed(71)
-        state = torch.get_rng_state().clone()
-        loader_state = train.generator.get_state().clone()
-        with contextlib.redirect_stdout(io.StringIO()):
-            training.class_balance(train, val)
-        self.assertTrue(torch.equal(state, torch.get_rng_state()))
-        self.assertTrue(torch.equal(loader_state, train.generator.get_state()))
         other_train, _ = training.make_loaders(data, data, 4, 42)
         for _ in range(2):
             first = torch.cat([inputs for inputs, _ in train])
@@ -119,16 +114,15 @@ class WeightedTrainingChecks(unittest.TestCase):
             ratings = Path(folder) / 'ratings.csv'
             read_table(MANIFEST)[['image_id', 'previousStudent_grade', 'shane_grade']].to_csv(ratings, index=False)
             captured = []
-            for mode in ('previousStudent', 'shane', 'soft'):
+            for loss_name, weighted in [('cross_entropy', False), ('cross_entropy', True), ('continuous_cdw_ce', False)]:
                 record = {'states': [], 'orders': [], 'dropout': []}
-                soft = mode == 'soft'
                 patches = [(torch.full((1, 8, 8), float(i)),
-                            torch.nn.functional.one_hot(torch.tensor(i % 5), 5).float() if soft else torch.tensor(i % 5), split)
+                            torch.nn.functional.one_hot(torch.tensor(i % 5), 5).float() if loss_name == 'cross_entropy' else torch.tensor(float(i % 5 + 1)), split)
                            for split in ('train', 'val') for i in range(15)]
-                argv = ['training.py', '--grader', mode, '--dataset_csv_path', str(MANIFEST),
+                argv = ['training.py', '--loss', loss_name, '--ratings_csv_path', str(ratings), '--dataset_csv_path', str(MANIFEST),
                         '--output_dir', folder, '--epochs', '2', '--batch_size', '4']
-                if soft:
-                    argv += ['--ratings_csv_path', str(ratings), '--class_weights_from', str(BASELINES['previousStudent'])]
+                if weighted:
+                    argv += ['--class_weights_from', str(BASELINES['previousStudent'])]
                 def fake_train(model, train_loader, val_loader, criterion, optimizer, device):
                     record['states'].append({k: v.clone() for k, v in model.state_dict().items()})
                     record['orders'].append(torch.cat([inputs[:, 0, 0, 0] for inputs, _ in train_loader]))

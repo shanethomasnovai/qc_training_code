@@ -11,8 +11,8 @@ import torch
 from PIL import Image
 from sklearn.metrics import cohen_kappa_score, f1_score
 
-from dataset import ImageQualityDataset, subsample_subimages
-from validation import calculate_validation_metrics, evaluate_validation, image_transform
+from autoqc.dataset import ImageQualityDataset, subsample_subimages
+from autoqc.validation import calculate_validation_metrics, evaluate_validation, image_transform
 
 
 class PixelModel(torch.nn.Module):

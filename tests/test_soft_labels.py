@@ -11,14 +11,14 @@ import pandas as pd
 import torch
 from PIL import Image
 
-import training
-from dataset import ImageQualityDataset, subsample_subimages
-from model import IQAnet
-from soft_labels import TARGET_COLUMNS, construct_targets, load_soft_manifest, read_table
-from validation import evaluate_validation, evaluate_saved_run, image_transform
+from autoqc import training
+from autoqc.dataset import ImageQualityDataset, subsample_subimages
+from autoqc.model import IQAnet
+from autoqc.soft_labels import TARGET_COLUMNS, construct_targets, load_soft_manifest, read_table
+from autoqc.validation import evaluate_validation, evaluate_saved_run, image_transform
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / 'prepared_visus_nhp/manifest.csv'
 
 

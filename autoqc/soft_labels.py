@@ -45,7 +45,7 @@ def validate_manifest(df, check_files=True):
     required = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split',
                 'previousStudent_grade', 'shane_grade']
     if df.empty or not set(required).issubset(df.columns):
-        raise ValueError('Use the existing shared manifest from prepare_inputs.py')
+        raise ValueError('Use the existing shared manifest from python -m autoqc.prepare_data')
     for column in required:
         if df[column].isna().any() or df[column].astype(str).str.strip().eq('').any():
             raise ValueError(f'Manifest has missing {column}')

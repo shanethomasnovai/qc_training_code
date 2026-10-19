@@ -8,10 +8,11 @@ import pandas as pd
 import torch
 from torchvision import transforms
 
-from dataset import ImageQualityDataset
-from model import IQAnet
-from soft_labels import TARGET_COLUMNS, construct_targets
-from distribution_metrics import calculate_distribution_metrics
+from .dataset import ImageQualityDataset
+from .model import IQAnet
+from .soft_labels import TARGET_COLUMNS, construct_targets
+from .distribution_metrics import calculate_distribution_metrics
+from .binary_metrics import calculate_binary_metrics, binary_confusion_matrix, binary_summary_fields, validate_threshold
 
 
 def image_transform():
@@ -61,7 +62,7 @@ def calculate_validation_metrics(reference, predicted):
     return metrics, per_grade, pd.DataFrame(cm, index=range(1, 6), columns=range(1, 6))
 
 
-def calculate_combined_metrics(reference, probabilities, grader_columns):
+def calculate_combined_metrics(reference, probabilities, grader_columns, binary_threshold=0.5):
     rated = construct_targets(reference.reset_index(drop=True), grader_columns)
     if not rated.has_ratings.all():
         raise ValueError('Combined metrics require at least one selected rating per image')
@@ -95,12 +96,17 @@ def calculate_combined_metrics(reference, probabilities, grader_columns):
     details['matches_any_grader'] = matches_any
     details['consensus_exact_match'] = errors == 0
     details['absolute_grade_error'] = errors
+    binary, binary_details = calculate_binary_metrics(votes, probabilities, binary_threshold)
+    metrics['binary'] = binary
+    for column in binary_details:
+        details[column] = binary_details[column].to_numpy()
     return metrics, details
 
 
-def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch_size=16, grader_columns=None, class_weights=None):
+def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch_size=16, grader_columns=None, class_weights=None, binary_threshold=0.5):
     """Average nine patch softmax probabilities, preserving each image's row ID."""
     soft = grader == 'soft'
+    validate_threshold(binary_threshold)
     if grader not in ('previousStudent', 'shane', 'soft') or batch_size < 1:
         raise ValueError('Invalid grader or batch size')
     df = pd.read_csv(manifest) if isinstance(manifest, (str, Path)) else manifest.copy()
@@ -128,7 +134,7 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
     output_dir = Path(output_dir)
     filenames = ['validation_metrics.json', 'validation_per_grade_metrics.csv',
                  'validation_confusion_matrix.csv', 'validation_predictions.csv']
-    distribution_files = ['distribution_metrics.json', 'distribution_per_image.csv'] if soft else []
+    distribution_files = ['distribution_metrics.json', 'distribution_per_image.csv', 'binary_confusion_matrix.csv'] if soft else []
     for filename in filenames + distribution_files:
         if (output_dir / filename).exists():
             raise FileExistsError(f'{output_dir / filename} already exists; preserving existing results')
@@ -199,7 +205,7 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
         cm = pd.concat(matrices, ignore_index=True)
         probabilities = predictions[[f'probability_grade_{i}' for i in range(1, 6)]].to_numpy()
         targets = predictions[TARGET_COLUMNS].to_numpy()
-        distribution_metrics, distribution_details = calculate_combined_metrics(val, probabilities, grader_columns)
+        distribution_metrics, distribution_details = calculate_combined_metrics(val, probabilities, grader_columns, binary_threshold)
         distribution_metrics.update({'grader_columns': grader_columns, 'split': 'validation'})
         distribution_details.insert(0, 'image_id', predictions.image_id.to_numpy())
         for column in distribution_details.columns:
@@ -242,6 +248,7 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
     if soft:
         (output_dir / distribution_files[0]).write_text(json.dumps(distribution_metrics, indent=2, allow_nan=False), encoding='utf-8')
         distribution_details.to_csv(output_dir / distribution_files[1], index=False)
+        binary_confusion_matrix(metrics['binary']).to_csv(output_dir / 'binary_confusion_matrix.csv')
     print('\nWhole-image validation (best saved checkpoint):')
     if soft:
         print(f"  earth_movers_distance (grade steps): {metrics['earth_movers_distance']:.6f}")
@@ -251,6 +258,11 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
             value = metrics[key]
             print(f'  {key}: {value:.6f}' if value is not None else f'  {key}: undefined (zero expected disagreement)')
         print(f"  Reference ties: {metrics['reference_tie_count']}/{metrics['image_count']} ({metrics['reference_tie_percentage']:.2f}%)")
+        print('  Binary evaluation (unacceptable positive; tied references assumed acceptable):')
+        for key, value in binary_summary_fields(metrics['binary']).items():
+            print(f'    {key}: {value}')
+        print(f"    undefined_reasons: {metrics['binary']['undefined_reasons']}")
+        print(f"    unique_majority_undefined_reasons: {metrics['binary']['unique_majority']['undefined_reasons']}")
     for key in ('exact_accuracy', 'within_one_grade_accuracy', 'mean_absolute_grade_error',
                 'quadratic_weighted_kappa', 'macro_f1', 'weighted_f1'):
         if soft:
@@ -261,7 +273,7 @@ def evaluate_validation(model, manifest, grader, output_dir, device='cpu', batch
     return metrics, predictions
 
 
-def evaluate_saved_run(run_dir, grader=None, device=None, batch_size=None):
+def evaluate_saved_run(run_dir, grader=None, device=None, batch_size=None, binary_threshold=0.5):
     """Load the run's own manifest, model parameters and best saved state dict."""
     run_dir = Path(run_dir)
     params = pd.read_csv(run_dir / 'model_params.csv').iloc[0]
@@ -291,7 +303,7 @@ def evaluate_saved_run(run_dir, grader=None, device=None, batch_size=None):
         manifest = run_dir / 'targets.csv'
     return evaluate_validation(model, manifest, grader, run_dir,
                                device=device, batch_size=int(params['batch_size']) if batch_size is None else batch_size,
-                               grader_columns=columns, class_weights=class_weights)
+                               grader_columns=columns, class_weights=class_weights, binary_threshold=binary_threshold)
 
 
 if __name__ == '__main__':
@@ -299,5 +311,6 @@ if __name__ == '__main__':
     parser.add_argument('--run-dir', type=Path, required=True)
     parser.add_argument('--grader', choices=['previousStudent', 'shane', 'soft'])
     parser.add_argument('--batch-size', type=int)
+    parser.add_argument('--binary-threshold', type=float, default=0.5)
     args = parser.parse_args()
-    evaluate_saved_run(args.run_dir, args.grader, batch_size=args.batch_size)
+    evaluate_saved_run(args.run_dir, args.grader, batch_size=args.batch_size, binary_threshold=args.binary_threshold)

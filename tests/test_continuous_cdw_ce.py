@@ -12,15 +12,15 @@ import torch
 from PIL import Image
 from torch.nn import functional as F
 
-import training
-from dataset import ImageQualityDataset, subsample_subimages
-from losses import ContinuousCDWCELoss, continuous_cdw_ce, make_criterion
-from score_distributions import prepare_report
-from soft_labels import TARGET_COLUMNS, construct_continuous_targets, load_soft_manifest, read_table
-from validation import calculate_combined_metrics, evaluate_saved_run, image_transform
+from autoqc import training
+from autoqc.dataset import ImageQualityDataset, subsample_subimages
+from autoqc.losses import ContinuousCDWCELoss, continuous_cdw_ce, make_criterion
+from autoqc.score_distributions import prepare_report
+from autoqc.soft_labels import TARGET_COLUMNS, construct_continuous_targets, load_soft_manifest, read_table
+from autoqc.validation import calculate_combined_metrics, evaluate_saved_run, image_transform
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / 'prepared_visus_nhp/manifest.csv'
 RATINGS = ROOT / 'runs/soft_20261016_122507_325_f156d443/ratings_input.xlsx'
 

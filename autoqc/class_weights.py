@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from soft_labels import read_table, sha256, validate_manifest
+from .soft_labels import read_table, sha256, validate_manifest
 
 
 def baseline_class_weights(run_dir, reference_grader=None, current_manifest=None):

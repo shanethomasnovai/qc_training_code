@@ -8,10 +8,10 @@ import pandas as pd
 from scipy.stats import wasserstein_distance
 from sklearn.metrics import cohen_kappa_score
 
-from distribution_metrics import PROBABILITY_COLUMNS, TARGET_COLUMNS, calculate_distribution_metrics
-from score_distributions import prepare_report, score_runs
-from soft_labels import construct_targets
-from validation import calculate_combined_metrics
+from autoqc.distribution_metrics import PROBABILITY_COLUMNS, TARGET_COLUMNS, calculate_distribution_metrics
+from autoqc.score_distributions import prepare_report, score_runs
+from autoqc.soft_labels import construct_targets
+from autoqc.validation import calculate_combined_metrics
 
 
 class DistributionMetricChecks(unittest.TestCase):

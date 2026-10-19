@@ -1,8 +1,8 @@
 # Run from any directory; inputs are resolved relative to this script.
 [CmdletBinding()]
 param(
-    [ValidateSet('previousStudent', 'shane', 'soft')]
-    [string]$Grader = 'shane',
+    [ValidateSet('soft')]
+    [string]$Grader = 'soft',
     [string]$RatingsCsvPath,
     [string[]]$GraderColumns,
     [string]$RatingsSheet = 'Grades',
@@ -26,10 +26,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$pythonPath = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
-$trainingPath = Join-Path $PSScriptRoot 'training.py'
-$manifestPath = Join-Path $PSScriptRoot 'prepared_visus_nhp\manifest.csv'
-$runsPath = Join-Path $PSScriptRoot 'runs'
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
+$trainingPath = Join-Path $projectRoot 'autoqc\training.py'
+$manifestPath = Join-Path $projectRoot 'prepared_visus_nhp\manifest.csv'
+$runsPath = Join-Path $projectRoot 'runs'
 
 foreach ($requiredPath in @($pythonPath, $trainingPath, $manifestPath)) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
@@ -41,7 +42,7 @@ foreach ($requiredPath in @($pythonPath, $trainingPath, $manifestPath)) {
 $runPrefix = if ($Loss -eq 'continuous_cdw_ce') { 'continuous_cdw_ce' } else { $Grader }
 $runName = $runPrefix + '_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff') + '_' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
 $trainingArguments = @(
-    $trainingPath,
+    '-m', 'autoqc.training',
     '--dataset_csv_path', $manifestPath,
     '--grader', $Grader,
     '--loss', $Loss,
@@ -56,27 +57,32 @@ $trainingArguments = @(
     '--seed', $Seed.ToString(),
     '--reduce_lr'
 )
-if ($Grader -eq 'soft') {
-    if (-not $RatingsCsvPath) { throw '-Grader soft requires -RatingsCsvPath' }
-    $trainingArguments += @('--ratings_csv_path', $RatingsCsvPath)
-    $trainingArguments += @('--ratings_sheet', $RatingsSheet)
-    if ($ExcludeKnownUnmatched) { $trainingArguments += '--exclude_known_unmatched' }
-    if ($GraderColumns) { $trainingArguments += @('--grader_columns') + $GraderColumns }
-    if ($ClassWeightsFrom) { $trainingArguments += @('--class_weights_from', $ClassWeightsFrom) }
-    if ($WeightReferenceGrader) { $trainingArguments += @('--weight_reference_grader', $WeightReferenceGrader) }
-} elseif ($RatingsCsvPath -or $GraderColumns -or $ClassWeightsFrom -or $WeightReferenceGrader) {
-    throw 'Ratings options require -Grader soft'
+if (-not $RatingsCsvPath) { throw 'Combined-grader training requires -RatingsCsvPath' }
+$RatingsCsvPath = (Resolve-Path -LiteralPath $RatingsCsvPath -ErrorAction Stop).Path
+$trainingArguments += @('--ratings_csv_path', $RatingsCsvPath)
+$trainingArguments += @('--ratings_sheet', $RatingsSheet)
+if ($ExcludeKnownUnmatched) { $trainingArguments += '--exclude_known_unmatched' }
+if ($GraderColumns) { $trainingArguments += @('--grader_columns') + $GraderColumns }
+if ($ClassWeightsFrom) {
+    $ClassWeightsFrom = (Resolve-Path -LiteralPath $ClassWeightsFrom -ErrorAction Stop).Path
+    $trainingArguments += @('--class_weights_from', $ClassWeightsFrom)
 }
+if ($WeightReferenceGrader) { $trainingArguments += @('--weight_reference_grader', $WeightReferenceGrader) }
 if ($CheckOnly) { $trainingArguments += '--check_only' }
 
-Write-Host "Training $Grader labels for up to $Epochs epochs (early stopping patience: $Patience)."
+Write-Host "Training combined grader ratings with $Loss for up to $Epochs epochs (early stopping patience: $Patience)."
 Write-Host "Shared manifest: $manifestPath"
 Write-Host "Output: $(Join-Path $runsPath $runName)"
 Write-Host 'VISUS-NHP remains held out; no test evaluation is performed.'
 
-& $pythonPath @trainingArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Training failed with exit code $LASTEXITCODE."
+Push-Location -LiteralPath $projectRoot
+try {
+    & $pythonPath @trainingArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Training failed with exit code $LASTEXITCODE."
+    }
+} finally {
+    Pop-Location
 }
 
 if ($CheckOnly) { Write-Host 'Input checks complete; no run created.' }

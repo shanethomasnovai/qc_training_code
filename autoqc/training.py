@@ -9,31 +9,17 @@ import hashlib
 import numpy as np
 from pathlib import Path
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
 
-from model import IQAnet
-from dataset import ImageQualityDataset, subsample_subimages
-from utils import get_class_counts
-from validation import evaluate_saved_run
-from soft_labels import TARGET_COLUMNS, construct_continuous_targets, load_soft_manifest, sha256
-from class_weights import baseline_class_weights
-from losses import make_criterion, validate_alpha
-
-
-def class_balance(train_loader, val_loader):
-    loaders = (train_loader, val_loader)
-    generators = {loader.generator for loader in loaders if loader.generator is not None}
-    states = {generator: generator.get_state() for generator in generators}
-    try:
-        with torch.random.fork_rng(devices=[]):
-            return _class_balance(train_loader, val_loader)
-    finally:
-        for generator, state in states.items():
-            generator.set_state(state)
+from .model import IQAnet
+from .dataset import ImageQualityDataset, subsample_subimages
+from .validation import evaluate_saved_run, image_transform
+from .soft_labels import TARGET_COLUMNS, construct_continuous_targets, load_soft_manifest, sha256
+from .class_weights import baseline_class_weights
+from .losses import make_criterion, validate_alpha
 
 
 def make_loaders(train_dataset, val_dataset, batch_size, seed):
@@ -54,28 +40,6 @@ def model_fingerprint(model):
         digest.update(name.encode('utf-8'))
         digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
     return digest.hexdigest()
-
-
-def _class_balance(train_loader, val_loader):
-    set_class_weights = {'Training': None, 'Validation': None}
-
-    for loader_label, loader in zip(['Training', 'Validation'], [train_loader, val_loader]):
-        class_counts = get_class_counts(loader)
-
-        label_sum = sum(class_counts.values())
-        n_classes = len(class_counts)
-
-        class_weight = {}
-        for class_label, count in class_counts.items():
-            print(f"{loader_label} Class {class_label}: {count} samples")
-            class_weight[class_label] = label_sum / (n_classes * count)
-
-        for weight_label, weight in class_weight.items():
-            print(f"{loader_label} Class {weight_label} Weight: {weight:.4f}")
-
-        set_class_weights[loader_label] = class_weight
-
-    return set_class_weights['Training'], set_class_weights['Validation']
 
 
 def train(model, train_loader, val_loader, criterion, optimizer, device):
@@ -127,20 +91,13 @@ def save_model(
     dataset_file,
     args,
     model_name=None,
-    num_classes=2,
+    num_classes=5,
     summary_csv_path=None
 ):
 
     # Creating folder name
     if model_name is None:
-        if num_classes == 2:
-            class_type = "singleclass"
-        else:
-            class_type = "multiclass"
-        model_name = (
-            f"Auto_qc_{class_type}_lr_{args.learning_rate}_batch_{args.batch_size}"
-            f"patience_{args.patience}_seed_{args.seed}_optim_AdamW"
-        )
+        model_name = f'Auto_qc_soft_{args.loss}_{args.optimizer}_seed_{args.seed}'
     model_dir = os.path.join(output_dir, model_name)
     os.makedirs(model_dir, exist_ok=False)
 
@@ -162,22 +119,21 @@ def save_model(
     settings = vars(args).copy()
     settings.update({'loss': 'continuous_cdw_ce' if args.loss == 'continuous_cdw_ce' else 'CrossEntropyLoss',
                      'loss_selection': args.loss, 'class_weights': args.class_weights,
-                     'class_weight_mode': ('baseline' if args.class_weights_from else 'none') if args.grader == 'soft' else 'inverse_training_frequency',
+                     'class_weight_mode': 'baseline' if args.class_weights_from else 'none',
                      'loss_reduction': 'mean',
-                     'loss_mean_denominator': 'batch_size' if args.grader == 'soft' else 'sum of target class weights in batch',
+                     'loss_mean_denominator': 'batch_size',
                      'manifest_sha256': sha256(dataset_file), 'num_classes': 5,
                      'patches_per_image': 9, 'training_horizontal_flip': True,
                      'torch_version': torch.__version__, 'numpy_version': np.__version__})
-    if args.grader == 'soft':
-        if sha256(dataset_file) != args.input_manifest_sha256 or sha256(args.ratings_csv_path) != args.input_ratings_sha256:
-            raise ValueError('Inputs changed during training; refusing to save misleading provenance')
-        args.target_table.to_csv(Path(model_dir) / 'targets.csv', index=False)
-        settings.pop('target_table')
-        settings['ratings_sha256'] = sha256(args.ratings_csv_path)
-        shutil.copyfile(args.ratings_csv_path, Path(model_dir) / ('ratings_input' + Path(args.ratings_csv_path).suffix))
-        split_report = Path(dataset_file).parent / 'split_report.json'
-        if split_report.is_file():
-            shutil.copyfile(split_report, Path(model_dir) / 'split_report.json')
+    if sha256(dataset_file) != args.input_manifest_sha256 or sha256(args.ratings_csv_path) != args.input_ratings_sha256:
+        raise ValueError('Inputs changed during training; refusing to save misleading provenance')
+    args.target_table.to_csv(Path(model_dir) / 'targets.csv', index=False)
+    settings.pop('target_table')
+    settings['ratings_sha256'] = sha256(args.ratings_csv_path)
+    shutil.copyfile(args.ratings_csv_path, Path(model_dir) / ('ratings_input' + Path(args.ratings_csv_path).suffix))
+    split_report = Path(dataset_file).parent / 'split_report.json'
+    if split_report.is_file():
+        shutil.copyfile(split_report, Path(model_dir) / 'split_report.json')
     (Path(model_dir) / 'run_config.json').write_text(json.dumps(settings, indent=2), encoding='utf-8')
     
     # Save metrics summary
@@ -250,7 +206,7 @@ def save_model(
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a model to classify the quality of images')
+    parser = argparse.ArgumentParser(description='Train five-grade image quality models from multiple graders')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--batch_size', type=int, default=16, help='batch size')
     parser.add_argument('--epochs', type=int, default=1000, help='number of epochs')
@@ -259,15 +215,11 @@ def main():
     parser.add_argument('--reduce_lr', action='store_true', help='whether to use ReduceLROnPlateau scheduler')
     parser.add_argument('--patience', type=int, default=10, help='patience for early stopping')
     parser.add_argument('--batch_normalization', action='store_true', help='whether to use batch normalization')
-    parser.add_argument('--output_sigmoid', action='store_true', help='whether to apply sigmoid activation to output layer (for binary classification)')
-    parser.add_argument('--test_split', type=float, default=0.10, help='percentage of dataset to use for testing')
-    parser.add_argument('--val_split', type=float, default=0.20, help='percentage of dataset to use for testing')
     parser.add_argument('--dataset_csv_path', type=str, required=True, help='path to datset csv file')
-    parser.add_argument('--images_dir', type=str, help='base dir path for images (if not included in csv)')
     parser.add_argument('--output_dir', type=str, required=True, help='dir path to save models')
     parser.add_argument('--model_name', type=str, default=None, help='name for model folder (default: auto-generated based on hyperparameters)')
-    parser.add_argument('--grader', choices=['previousStudent', 'shane', 'soft'], required=True)
-    parser.add_argument('--ratings_csv_path', help='Combined ratings CSV joined to the existing manifest')
+    parser.add_argument('--grader', choices=['soft'], default='soft', help='Compatibility flag for combined-grader runs; single-grader training is retired')
+    parser.add_argument('--ratings_csv_path', required=True, help='Combined ratings CSV or XLSX joined to the existing manifest')
     parser.add_argument('--grader_columns', nargs='+', help='Explicit *_grade columns; default: discover *_grade in ratings CSV')
     parser.add_argument('--ratings_sheet', default='Grades', help='Worksheet for .xlsx ratings')
     parser.add_argument('--exclude_known_unmatched', action='store_true', help='Explicitly exclude only IDs recorded as unmatched in the saved split_report.json')
@@ -278,27 +230,18 @@ def main():
     parser.add_argument('--alpha', type=float, default=1.0, help='Positive finite distance exponent for continuous_cdw_ce')
   
     args = parser.parse_args()
+    args.output_sigmoid = False
     try:
         validate_alpha(args.alpha)
     except ValueError as error:
         parser.error(str(error))
     if args.loss == 'continuous_cdw_ce':
-        if args.grader != 'soft':
-            parser.error('--loss continuous_cdw_ce requires --grader soft and combined ratings')
         if args.class_weights_from or args.weight_reference_grader:
             parser.error('continuous_cdw_ce uses distance weights only; omit class-weight options')
     elif args.alpha != 1.0:
         parser.error('--alpha is only configurable with --loss continuous_cdw_ce')
     if args.epochs < 1:
         parser.error('--epochs must be at least 1')
-    if args.output_sigmoid:
-        parser.error('Five-grade CrossEntropyLoss requires logits; omit --output_sigmoid')
-    if args.grader == 'soft' and not args.ratings_csv_path:
-        parser.error('--grader soft requires --ratings_csv_path')
-    if args.grader != 'soft' and (args.ratings_csv_path or args.grader_columns or args.exclude_known_unmatched):
-        parser.error('Ratings options require --grader soft')
-    if args.grader != 'soft' and (args.class_weights_from or args.weight_reference_grader):
-        parser.error('Baseline weight options require --grader soft')
     if args.weight_reference_grader and not args.class_weights_from:
         parser.error('--weight_reference_grader requires --class_weights_from')
     if args.model_name is None:
@@ -313,73 +256,41 @@ def main():
     device = torch.device("mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu"))
     print('Using device:', device)
 
-    transform = transforms.Compose([
-        transforms.Resize((768, 768)),
-        transforms.Grayscale(num_output_channels=1),
-        transforms.ToTensor()
-    ])
+    transform = image_transform()
 
-    if args.grader == 'soft':
-        args.input_manifest_sha256 = sha256(args.dataset_csv_path)
-        args.input_ratings_sha256 = sha256(args.ratings_csv_path)
-        df, args.grader_columns, args.unrated_counts = load_soft_manifest(
-            args.dataset_csv_path, args.ratings_csv_path, args.grader_columns,
-            sheet=args.ratings_sheet, exclude_known_unmatched=args.exclude_known_unmatched)
-        if args.loss == 'continuous_cdw_ce':
-            df = construct_continuous_targets(df, args.grader_columns)
-        args.target_table = df.copy()
-        print(f'Selected grader columns: {args.grader_columns}')
-    else:
-        df = pd.read_csv(args.dataset_csv_path)
-    required = {'image_path', 'patient_id', 'project', 'split', 'previousStudent_grade', 'shane_grade'}
-    if args.grader == 'soft':
-        required -= {'previousStudent_grade', 'shane_grade'}
-    if not required.issubset(df.columns):
-        raise ValueError('Use the shared manifest from prepare_inputs.py')
-    if df[list(required)].isna().any().any() or df.empty:
-        raise ValueError('Manifest contains missing values or is empty')
-    if not set(df['split']).issubset({'train', 'validation', 'test'}):
-        raise ValueError('Unknown manifest split')
-    if df.groupby('patient_id')['split'].nunique().max() != 1:
-        raise ValueError('Patient leakage in manifest')
-    held_out = df['project'].str.casefold() == 'visus-nhp'
-    if not held_out.any() or (df.loc[held_out, 'split'] != 'test').any():
-        raise ValueError('Entire VISUS-NHP trial must be held out')
-    for grader in (() if args.grader == 'soft' else ('previousStudent', 'shane')):
-        if not df[f'{grader}_grade'].isin(range(1, 6)).all():
-            raise ValueError(f'Invalid {grader} grades')
-    if not all((df['split'] == mode).any() for mode in ('train', 'validation')):
-        raise ValueError('Empty train or validation split')
-    if not df['image_path'].map(lambda path: Path(path).is_file()).all():
-        raise ValueError('Manifest image files are missing')
+    args.input_manifest_sha256 = sha256(args.dataset_csv_path)
+    args.input_ratings_sha256 = sha256(args.ratings_csv_path)
+    df, args.grader_columns, args.unrated_counts = load_soft_manifest(
+        args.dataset_csv_path, args.ratings_csv_path, args.grader_columns,
+        sheet=args.ratings_sheet, exclude_known_unmatched=args.exclude_known_unmatched)
+    if args.loss == 'continuous_cdw_ce':
+        df = construct_continuous_targets(df, args.grader_columns)
+    args.target_table = df.copy()
+    print(f'Selected grader columns: {args.grader_columns}')
     train_class_weights = None
     args.class_weight_source = {'method': 'none'}
     if args.class_weights_from:
         train_class_weights, args.class_weight_source = baseline_class_weights(
             args.class_weights_from, args.weight_reference_grader, args.dataset_csv_path)
         print(f'Baseline class weights (grades 1-5): {train_class_weights}; source: {args.class_weight_source}')
-    elif args.grader == 'soft':
+    else:
         print(f'{args.loss}; no class-balancing weights; reduction=mean (over patches)')
     args.target_construction = ('arithmetic mean of available selected integer ratings; unrounded, 1-5 scale'
                                 if args.loss == 'continuous_cdw_ce' else
-                                'fractions of available selected grader votes in grade order 1-5' if args.grader == 'soft' else
-                                f'{args.grader} integer grade mapped to class index 0-4')
+                                'fractions of available selected grader votes in grade order 1-5')
     if args.check_only:
         print('Input and split checks passed; no training performed.')
         return
     # Test images never need decoding or patching during training.
     test_image_count = (df['split'] == 'test').sum()
     df = df[df['split'] != 'test'].copy().reset_index(drop=True)
-    if args.grader == 'soft':
-        df = df[df.has_ratings].reset_index(drop=True)
+    df = df[df.has_ratings].reset_index(drop=True)
     df['image_filename'] = df['image_path']
-    if args.grader != 'soft':
-        df['image_grading'] = df[f'{args.grader}_grade']
     df['mode'] = df['split'].replace({'validation': 'val'})
 
     print('Loading dataset...')
-    dataset = ImageQualityDataset(df, transform, label_mapping={grade: grade - 1 for grade in range(1, 6)},
-                                  target_columns=TARGET_COLUMNS if args.grader == 'soft' and args.loss == 'cross_entropy' else None,
+    dataset = ImageQualityDataset(df, transform,
+                                  target_columns=TARGET_COLUMNS if args.loss == 'cross_entropy' else None,
                                   scalar_target_column='continuous_target' if args.loss == 'continuous_cdw_ce' else None)
 
     print('Patching dataset...')
@@ -407,15 +318,6 @@ def main():
     print(f"\nTrain patches: {len(train_dataset)}, Val patches: {len(val_dataset)}; held-out test images: {test_image_count} (not loaded)")
     print(f"\nImage size (H, W): {patched_dataset[0][0].shape[1:]}")
 
-    if args.grader != 'soft':
-        train_class_weights, _ = class_balance(train_loader, val_loader)
-        missing = set(range(5)) - set(train_class_weights)
-        if missing:
-            raise ValueError(f'No training examples for grades {[index + 1 for index in sorted(missing)]}')
-        train_class_weights = [train_class_weights[index] for index in range(5)]
-        args.class_weight_source = {'method': 'inverse training frequency', 'reference_grader': args.grader,
-                                    'manifest_sha256': sha256(args.dataset_csv_path),
-                                    'formula': 'N_train_patches / (5 * training_patch_count_for_grade)'}
     args.class_weights = train_class_weights
 
     num_classes = 5
@@ -426,7 +328,7 @@ def main():
     # Initialize the model
     model = initialise_model(args.seed, args.batch_normalization, args.output_sigmoid)
     args.initial_model_sha256 = model_fingerprint(model)
-    args.randomness = {'policy': 'separate loader generators; reset seed immediately before model initialisation; RNG-neutral class counting',
+    args.randomness = {'policy': 'separate loader generators; reset seed immediately before model initialisation',
                        'model_seed': args.seed, 'training_loader_seed': args.seed, 'validation_loader_seed': args.seed + 1}
     model.to(device)
     args.model_settings = str(model)

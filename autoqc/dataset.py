@@ -59,47 +59,6 @@ class ImageQualityDataset(Dataset):
         return image, torch.tensor(quality, dtype=torch.long)
 
 
-def patch_dataset(dataset):
-    '''Extract patches from a dataset of images.
-
-    Args:
-        dataset (torch.utils.data.Dataset): dataset of images
-
-    Returns:
-        list: list of tuples containing subimages and labels
-    '''
-
-    transformed_data = []
-
-    for i in range(len(dataset)):
-
-        image, label = dataset[i]
-
-        # Calculate patch size
-        _, height, width = image.size()
-        sub_image_width = width // 2
-        sub_image_height = height // 2
-
-        # Reshape the image tensor using unfold
-        unfolded = torch.nn.functional.unfold(
-            image,
-            (sub_image_height, sub_image_width),
-            stride=(sub_image_height, sub_image_width)
-            )
-
-        # Reshape the unfolded tensor to get sub-images
-        num_patches = unfolded.shape[1]
-        sub_images = unfolded.view(-1, 1, sub_image_height, sub_image_width)
-
-        # Duplicate labels for each sub-image
-        labels = [label] * num_patches
-
-        # Append sub-images and labels to the transformed data
-        transformed_data.extend(zip(sub_images, labels))
-
-    return transformed_data
-
-
 def subsample_subimages(
         dataset,
         method='+',
