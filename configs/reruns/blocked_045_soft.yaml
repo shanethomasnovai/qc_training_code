@@ -1,0 +1,131 @@
+{
+  "schema": "autoqc_cnn_config_v1",
+  "experiment_id": "blocked_045_soft",
+  "status": "blocked",
+  "blocked_reasons": [
+    "Unknown saved scheduler settings"
+  ],
+  "historical_run": "runs/soft_20261016_122507_325_f156d443",
+  "known_saved_settings": {
+    "seed": 42,
+    "batch_size": 16,
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "optimizer": "AdamW",
+    "reduce_lr": true,
+    "patience": 10,
+    "batch_normalization": false,
+    "output_sigmoid": false,
+    "test_split": 0.1,
+    "val_split": 0.2,
+    "dataset_csv_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\prepared_visus_nhp\\manifest.csv",
+    "images_dir": null,
+    "output_dir": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs",
+    "model_name": "soft_20261016_122507_325_f156d443",
+    "grader": "soft",
+    "ratings_csv_path": "C:\\Users\\Shane\\.codex\\.chatgpt-projects\\g-p-6ac4dc817d048191ab3dd62ef2182bba\\outputs\\final_grader_update\\multigrader_ratings_updated.xlsx",
+    "grader_columns": [
+      "previousStudent_grade",
+      "shane_grade",
+      "reviewer1_grade",
+      "reviewer2_grade",
+      "reviewer3_grade"
+    ],
+    "ratings_sheet": "Grades",
+    "exclude_known_unmatched": true,
+    "check_only": false,
+    "class_weights_from": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\shane_20261013_121344_539_933fb0f3",
+    "weight_reference_grader": "shane",
+    "input_manifest_sha256": "39f67fe6c7c430c9dc5d0ad249322db01edabd85f2c7fc1255bd2cee14c157ca",
+    "input_ratings_sha256": "e4ea1ce05a02b45bc1d9c1ce5a3a7209a9388ecbb1a89bc9cf3ae8dd58342520",
+    "unrated_counts": {
+      "train": 0,
+      "validation": 0,
+      "test": 0
+    },
+    "class_weight_source": {
+      "baseline_run": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\shane_20261013_121344_539_933fb0f3",
+      "reference_grader": "shane",
+      "baseline_manifest_sha256": "39f67fe6c7c430c9dc5d0ad249322db01edabd85f2c7fc1255bd2cee14c157ca",
+      "model_params_sha256": "4833508e03e080b65aa161ead60de333880462f0ea6fb10b02ef041a992add96",
+      "grade_order": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "method": "reconstructed inverse training frequency",
+      "formula": "N_train_images / (5 * training_image_count_for_grade)",
+      "training_image_counts": [
+        56,
+        176,
+        181,
+        87,
+        8
+      ],
+      "training_image_count": 508,
+      "uniform_training_patches_per_image_including_flip": 18
+    },
+    "class_weights": [
+      1.8142857142857143,
+      0.5772727272727273,
+      0.5613259668508287,
+      1.167816091954023,
+      12.7
+    ],
+    "initial_model_sha256": "5e4c7e7596600568e679047f6b4d9092cd8d767029cf6ed2c43fb71e127dc56d",
+    "randomness": {
+      "policy": "separate loader generators; reset seed immediately before model initialisation; RNG-neutral class counting",
+      "model_seed": 42,
+      "training_loader_seed": 42,
+      "validation_loader_seed": 43
+    },
+    "model_settings": "IQAnet(\n  (conv1): Conv2d(1, 64, kernel_size=(5, 5), stride=(3, 3))\n  (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, bias=True, track_running_stats=True)\n  (conv2): Conv2d(64, 32, kernel_size=(3, 3), stride=(2, 2))\n  (bn2): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, bias=True, track_running_stats=True)\n  (fc1): Linear(in_features=64, out_features=600, bias=True)\n  (fc2): Linear(in_features=600, out_features=400, bias=True)\n  (fc3_d): Linear(in_features=400, out_features=5, bias=True)\n  (dropout): Dropout(p=0.5, inplace=False)\n  (sigmoid): Sigmoid()\n)",
+    "preprocessing": {
+      "resize": [
+        768,
+        768
+      ],
+      "grayscale_channels": 1,
+      "patch_size": 256,
+      "grid_size": 3,
+      "method": "all"
+    },
+    "effective_class_weights_float32": [
+      1.8142857551574707,
+      0.5772727131843567,
+      0.5613259673118591,
+      1.1678160429000854,
+      12.699999809265137
+    ],
+    "optimizer_settings": {
+      "lr": 0.001,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.05,
+      "amsgrad": false,
+      "maximize": false,
+      "foreach": null,
+      "capturable": false,
+      "differentiable": false,
+      "fused": null,
+      "decoupled_weight_decay": true
+    },
+    "loss": "CrossEntropyLoss",
+    "class_weight_mode": "baseline",
+    "loss_reduction": "mean",
+    "loss_mean_denominator": "batch_size",
+    "manifest_sha256": "39f67fe6c7c430c9dc5d0ad249322db01edabd85f2c7fc1255bd2cee14c157ca",
+    "num_classes": 5,
+    "patches_per_image": 9,
+    "training_horizontal_flip": true,
+    "torch_version": "2.14.1+cpu",
+    "numpy_version": "2.5.4",
+    "ratings_sha256": "e4ea1ce05a02b45bc1d9c1ce5a3a7209a9388ecbb1a89bc9cf3ae8dd58342520"
+  },
+  "unknown_setting_policy": "do not fill from folder names or current defaults"
+}

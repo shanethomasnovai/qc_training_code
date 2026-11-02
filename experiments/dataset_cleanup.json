@@ -1,0 +1,11 @@
+{
+  "archive": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752",
+  "active_version": "reviewed-v2",
+  "previous_queue_sha256": "f9e84b68c924db6493c1cd8efc61ef67bb144b3e41a406cf22d0ad6f681c5115",
+  "historical_dataset_values_unchanged": true,
+  "status": "completed",
+  "active_directory": "datasets/reviewed_v2",
+  "workbooks": 8,
+  "newest_records_and_targets_unchanged": true,
+  "historical_configs_path_only_changes_verified": true
+}

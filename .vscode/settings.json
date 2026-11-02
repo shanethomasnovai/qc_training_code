@@ -1,0 +1,14 @@
+{
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    ".venv": true,
+    "data": true,
+    "images": true,
+    "prepared": true,
+    "prepared_visus_nhp": true,
+    "runs": true,
+    "datasets": false,
+    "model_dir": false
+  }
+}

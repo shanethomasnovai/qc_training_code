@@ -1,0 +1,177 @@
+{
+  "archive_path": "C:\\Users\\Shane\\Downloads\\ds-auto-qc-Multi-class-qc (1).zip",
+  "archive_sha256": "6ccfb237b8358e28caaa9a0cf152b9aa52dc3352371fbcda5d73fc6c185a6c34",
+  "original_commit": "unknown; archive comment is not independently verified Git provenance",
+  "unverified_archive_comment": "4159a47bb31b2e1177f7dff3c57e1c5713782a77",
+  "scope": "CNN source modules; no reference training/testing CLI executed",
+  "original_source_sha256": {
+    "auto_qc\\CNN\\__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "auto_qc\\CNN\\dataset.py": "0b58b3cdab82dd406930db374713e9962b7ac0a6eda5f372fd94011d3fd5c10d",
+    "auto_qc\\CNN\\kfold.py": "c586ec05fe9340374c9d8518a65e88f308a5f04df48c76fbfad4aecfe930a3cc",
+    "auto_qc\\CNN\\model.py": "156e19acbed3c3268a9c548bf9e35295ba75dcaa04ba92b8f883ff906db8605c",
+    "auto_qc\\CNN\\testing.py": "00b263c4d207df6f72383ff647673ae856f86a33bf8f3d2bf3d042c7cabfd218",
+    "auto_qc\\CNN\\training.py": "8118985f06a4cee6667179a2536a60cc84ecea239a715e7600bb19a7771186b5",
+    "auto_qc\\CNN\\utils.py": "8a43d2ea506b01d85e47a64fc26a07d2c15e9d836949dcf953d2234e6c3e3d7e"
+  },
+  "current_source_sha256": {
+    "auto_qc\\__init__.py": "0d7b6f0509545abd19483be01360ab5c700728c10571846bd5d45b65b8552d26",
+    "auto_qc\\CNN\\collect_results.py": "d44d091725b1e40e51f8db0efa3e463381148de72b934d3ec6a35dc6315185e2",
+    "auto_qc\\CNN\\dataset.py": "23215ea4cb690e266f8eba7256826d1f4b46a94c13f7c305effddba3a3214bee",
+    "auto_qc\\CNN\\generate_datasets.py": "f41875f75e2c822aadab2f686e63a54095da68bc57d9d2ec0cb39c7b8b972c21",
+    "auto_qc\\CNN\\losses.py": "1f5427f77f0139c098a989a35f1529ad836e7c370685665054d0751837e84423",
+    "auto_qc\\CNN\\metrics.py": "3e09de32c77b3666572ebf1cb68bc4bc297bd0176135843d897af7354183fa94",
+    "auto_qc\\CNN\\model.py": "ecca8ab67dac9cf961773153294217ac3840e651f039ccbc09ec849ea9b5195d",
+    "auto_qc\\CNN\\rerun.py": "1e8f01a5ebecc7a3c7d80aef56b34196c275437133acbd02569ba5040d65f67f",
+    "auto_qc\\CNN\\testing.py": "3e28c8c3df98fd9b7bfddb63b6af910d125befb81900a16c6b2fe5d63260ce7a",
+    "auto_qc\\CNN\\training.py": "f6d48b0c26eaa8e63fb21ecc34d53ff8451d9d1e4757bb194192778bf677cc0b",
+    "auto_qc\\CNN\\utils.py": "770dc842b1b21df5c7322d66a8748e8316a6d234df5e9ee30c21de74d04a5323",
+    "auto_qc\\CNN\\__init__.py": "9f69af8db26a545d84d98c88d30ca67f58b4a2e7d382d075fa9c07d777cc5ee6"
+  },
+  "checks": {
+    "original_iqanet_constructor_ast_equal": true,
+    "feature_operations_ast_equal": true,
+    "preprocessing_transform_ast_equal": true,
+    "nine_patch_pixels_and_order_equal": true,
+    "eighteen_training_patches_including_flips_equal": true
+  },
+  "model_cases": [
+    {
+      "batch_normalization": false,
+      "output_sigmoid": false,
+      "training_mode_forward_only": false,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": false,
+      "output_sigmoid": false,
+      "training_mode_forward_only": true,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": false,
+      "output_sigmoid": true,
+      "training_mode_forward_only": false,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": false,
+      "output_sigmoid": true,
+      "training_mode_forward_only": true,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": true,
+      "output_sigmoid": false,
+      "training_mode_forward_only": false,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": true,
+      "output_sigmoid": false,
+      "training_mode_forward_only": true,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": true,
+      "output_sigmoid": true,
+      "training_mode_forward_only": false,
+      "exact_output_equality": true
+    },
+    {
+      "batch_normalization": true,
+      "output_sigmoid": true,
+      "training_mode_forward_only": true,
+      "exact_output_equality": true
+    }
+  ],
+  "split_comparison": {
+    "same_full_image_ids": true,
+    "image_count": 661,
+    "original": {
+      "train": {
+        "images": 440,
+        "patients": 73
+      },
+      "validation": {
+        "images": 75,
+        "patients": 11
+      },
+      "test": {
+        "images": 146,
+        "patients": 23
+      }
+    },
+    "current_saved_assignments": {
+      "train": {
+        "images": 508,
+        "patients": 78
+      },
+      "validation": {
+        "images": 127,
+        "patients": 20
+      },
+      "test": {
+        "images": 26,
+        "patients": 9
+      }
+    },
+    "changed_assignments": 332,
+    "patient_ids_unchanged": true
+  },
+  "runtime_sources_unchanged_by_verification": true,
+  "root_readme_unchanged": true,
+  "real_images_decoded": false,
+  "optimizer_steps": 0,
+  "experiment_training_started": false,
+  "statement": "Numerical parity applies to original IQAnet and synthetic preprocessing, not to the new heads, targets or evaluation protocol",
+  "changed_cnn_files": [
+    {
+      "path": "auto_qc/CNN/__init__.py",
+      "kind": "modified"
+    },
+    {
+      "path": "auto_qc/CNN/collect_results.py",
+      "kind": "added"
+    },
+    {
+      "path": "auto_qc/CNN/dataset.py",
+      "kind": "modified"
+    },
+    {
+      "path": "auto_qc/CNN/generate_datasets.py",
+      "kind": "added"
+    },
+    {
+      "path": "auto_qc/CNN/kfold.py",
+      "kind": "not_carried_forward"
+    },
+    {
+      "path": "auto_qc/CNN/losses.py",
+      "kind": "added"
+    },
+    {
+      "path": "auto_qc/CNN/metrics.py",
+      "kind": "added"
+    },
+    {
+      "path": "auto_qc/CNN/model.py",
+      "kind": "modified"
+    },
+    {
+      "path": "auto_qc/CNN/rerun.py",
+      "kind": "added"
+    },
+    {
+      "path": "auto_qc/CNN/testing.py",
+      "kind": "modified"
+    },
+    {
+      "path": "auto_qc/CNN/training.py",
+      "kind": "modified"
+    },
+    {
+      "path": "auto_qc/CNN/utils.py",
+      "kind": "modified"
+    }
+  ]
+}

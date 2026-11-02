@@ -1,0 +1,11 @@
+{
+  "schema": "autoqc_cnn_config_v1",
+  "experiment_id": "blocked_044_shane",
+  "status": "blocked",
+  "blocked_reasons": [
+    "No saved effective optimiser/loss/weighting configuration; folder names are not evidence"
+  ],
+  "historical_run": "runs/shane_20261013_121344_539_933fb0f3",
+  "known_saved_settings": "See preserved model_params.csv; remaining settings unknown",
+  "unknown_setting_policy": "do not fill from folder names or current defaults"
+}

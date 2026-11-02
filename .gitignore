@@ -2,6 +2,9 @@ data/
 images/
 prepared/
 runs/
+model_dir/
+results/
+datasets/
 .venv/
 __pycache__/
 .DS_Store

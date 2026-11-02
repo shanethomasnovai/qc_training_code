@@ -1,0 +1,32 @@
+﻿{
+    "canonical_manifest":  "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111\\manifest.csv",
+    "canonical_manifest_sha256":  "dfe73e22f802a33ecbb4d52c361cd6e0436219ac73975d21ee5638fa6d23d73a",
+    "recorded_patients":  107,
+    "patients_in_multiple_splits":  0,
+    "split_patient_counts":  {
+                                 "train":  78,
+                                 "validation":  20,
+                                 "test":  9
+                             },
+    "pairwise_overlap":  [
+                             {
+                                 "split_a":  "train",
+                                 "split_b":  "validation",
+                                 "shared_patients":  0,
+                                 "patient_ids":  ""
+                             },
+                             {
+                                 "split_a":  "train",
+                                 "split_b":  "test",
+                                 "shared_patients":  0,
+                                 "patient_ids":  ""
+                             },
+                             {
+                                 "split_a":  "validation",
+                                 "split_b":  "test",
+                                 "shared_patients":  0,
+                                 "patient_ids":  ""
+                             }
+                         ],
+    "basis":  "Recorded patient identifiers in the canonical manifest; metadata only, no image decoding or training"
+}

@@ -1,0 +1,133 @@
+{
+  "schema": "autoqc_cnn_config_v1",
+  "experiment_id": "blocked_009_continuous",
+  "status": "blocked",
+  "blocked_reasons": [
+    "Unknown saved scheduler settings"
+  ],
+  "historical_run": "runs/continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_v1_baseline_only_20261026_092938_720749_60a848ca",
+  "known_saved_settings": {
+    "seed": 42,
+    "batch_size": 16,
+    "epochs": 50,
+    "learning_rate": 0.0003,
+    "optimizer": "AdamW",
+    "reduce_lr": true,
+    "patience": 10,
+    "batch_normalization": false,
+    "dataset_csv_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111\\manifest.csv",
+    "output_dir": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs",
+    "model_name": "continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_v1_baseline_only_20261026_092938_720749_60a848ca",
+    "grader": "soft",
+    "ratings_csv_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111\\ratings_input.xlsx",
+    "grader_columns": [
+      "previousStudent_grade",
+      "shane_grade",
+      "reviewer1_grade",
+      "reviewer2_grade",
+      "reviewer3_grade"
+    ],
+    "ratings_sheet": "Grades",
+    "exclude_known_unmatched": true,
+    "check_only": false,
+    "class_weights_from": null,
+    "weight_reference_grader": null,
+    "loss": "continuous_cdw_ce",
+    "alpha": 1.0,
+    "baseline_mode": "only",
+    "baseline_projects": [
+      "DARC-P2"
+    ],
+    "baseline_reference_run": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111",
+    "output_sigmoid": false,
+    "input_manifest_sha256": "dfe73e22f802a33ecbb4d52c361cd6e0436219ac73975d21ee5638fa6d23d73a",
+    "input_ratings_sha256": "8cc903b74f9f92f4d03e52758a741ca3171c4f3f3e49794b2cbfaf2c54acd84c",
+    "unrated_counts": {
+      "train": 0,
+      "validation": 0,
+      "test": 0
+    },
+    "baseline_metadata": {
+      "reference_run": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\runs\\continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111",
+      "reference_config_sha256": "28449f545e73ce0a96639ba440b56ce8e3fa104677f317a4e3b953d43e8a7c05",
+      "source_manifest_sha256": "dfe73e22f802a33ecbb4d52c361cd6e0436219ac73975d21ee5638fa6d23d73a",
+      "ratings_sha256": "8cc903b74f9f92f4d03e52758a741ca3171c4f3f3e49794b2cbfaf2c54acd84c",
+      "baseline_projects": [
+        "DARC-P2"
+      ],
+      "timepoint_rule": "For explicitly confirmed projects: suffix _1.<single timepoint digit>_<final index>; the final index is not the timepoint",
+      "unconfirmed_projects_policy": "Unconfirmed status; retained for include/exclude, excluded from train/validation for only; test always held out",
+      "checkpoint_rule": "Unchanged strict minimum patch validation loss; unchanged patience/scheduler",
+      "checkpoint_validation_population": "Condition-specific validation from filtered manifest; may differ between conditions",
+      "primary_validation_population": "Shared validation excluding confirmed-project timepoint 0; unconfirmed projects retained",
+      "primary_binary_method": "grade_argmax; exact five-probability ties select lowest grade; no probability threshold",
+      "primary_multiclass_metric": "consensus_reference_quadratic_weighted_kappa",
+      "seed": 42,
+      "shared_validation_sha256": "e304168125e7c41d0d09403b85baeb67efcfdc9c83ecb845e8bae753becb1f24"
+    },
+    "class_weight_source": {
+      "method": "none"
+    },
+    "target_construction": "arithmetic mean of available selected integer ratings; unrounded, 1-5 scale",
+    "class_weights": null,
+    "initial_model_sha256": "5e4c7e7596600568e679047f6b4d9092cd8d767029cf6ed2c43fb71e127dc56d",
+    "randomness": {
+      "policy": "separate loader generators; reset seed immediately before model initialisation",
+      "model_seed": 42,
+      "training_loader_seed": 42,
+      "validation_loader_seed": 43
+    },
+    "model_settings": "IQAnet(\n  (conv1): Conv2d(1, 64, kernel_size=(5, 5), stride=(3, 3))\n  (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, bias=True, track_running_stats=True)\n  (conv2): Conv2d(64, 32, kernel_size=(3, 3), stride=(2, 2))\n  (bn2): BatchNorm2d(32, eps=1e-05, momentum=0.1, affine=True, bias=True, track_running_stats=True)\n  (fc1): Linear(in_features=64, out_features=600, bias=True)\n  (fc2): Linear(in_features=600, out_features=400, bias=True)\n  (fc3_d): Linear(in_features=400, out_features=5, bias=True)\n  (dropout): Dropout(p=0.5, inplace=False)\n  (sigmoid): Sigmoid()\n)",
+    "preprocessing": {
+      "resize": [
+        768,
+        768
+      ],
+      "grayscale_channels": 1,
+      "patch_size": 256,
+      "grid_size": 3,
+      "method": "all"
+    },
+    "effective_class_weights_float32": null,
+    "optimizer_settings": {
+      "lr": 0.0003,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.05,
+      "amsgrad": false,
+      "maximize": false,
+      "foreach": null,
+      "capturable": false,
+      "differentiable": false,
+      "fused": null,
+      "decoupled_weight_decay": true
+    },
+    "loss_selection": "continuous_cdw_ce",
+    "class_weight_mode": "none",
+    "loss_reduction": "mean",
+    "loss_mean_denominator": "batch_size",
+    "manifest_sha256": "afea1bcc554e138f0be527d92cbd21ee4bf9541fe717d372c341350725e9a98a",
+    "num_classes": 5,
+    "patches_per_image": 9,
+    "training_horizontal_flip": true,
+    "torch_version": "2.14.1+cpu",
+    "numpy_version": "2.5.4",
+    "baseline_artifact_hashes": {
+      "manifest.csv": "afea1bcc554e138f0be527d92cbd21ee4bf9541fe717d372c341350725e9a98a",
+      "reference_targets.csv": "238adba28f900bafcfb00b95b52655af92838f01102647d498cb4f566ac9074d",
+      "shared_validation_targets.csv": "e304168125e7c41d0d09403b85baeb67efcfdc9c83ecb845e8bae753becb1f24",
+      "full_validation_targets.csv": "fdae037706607caf4cdec999e5d21c85e99af0e564265eb42f640485ecccefad",
+      "baseline_validation_targets.csv": "b12099c74f07e6f1476effb399d3dca62a98f082811f3a64c2a7cfdf75c45344",
+      "filename_audit.csv": "5b8163ea15a8ef1853f2d2955b8927f4634c1df807a1391700d57988274bfe1d",
+      "dataset_counts.csv": "9e5a2adc3bbe12055e71aa1e9ec3c58a27dea061a474f825c4e1bb4f355d0fb9",
+      "patient_counts.csv": "815288cc4c1a689f27a50edf501dca730f41f5ba8298d7bb51d00459ca2ff8b4",
+      "split_counts.csv": "39439f9f8ebad1a103c27559f9ebb4726531881dfd262ad9da02cdf501a824eb"
+    },
+    "filtered_manifest_sha256": "afea1bcc554e138f0be527d92cbd21ee4bf9541fe717d372c341350725e9a98a",
+    "ratings_sha256": "8cc903b74f9f92f4d03e52758a741ca3171c4f3f3e49794b2cbfaf2c54acd84c"
+  },
+  "unknown_setting_policy": "do not fill from folder names or current defaults"
+}

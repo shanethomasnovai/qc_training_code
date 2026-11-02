@@ -1,0 +1,3234 @@
+diff --git a/auto_qc/CNN/__init__.py b/auto_qc/CNN/__init__.py
+--- a/auto_qc/CNN/__init__.py
++++ b/auto_qc/CNN/__init__.py
+@@ -0,0 +1 @@
++"""IQAnet datasets, training and evaluation."""
+diff --git a/auto_qc/CNN/collect_results.py b/auto_qc/CNN/collect_results.py
+new file mode 100644
+--- /dev/null
++++ b/auto_qc/CNN/collect_results.py
+@@ -0,0 +1,157 @@
++"""Collect completed reruns into one readable results folder, without moving runs."""
++import argparse
++import csv
++from datetime import datetime, timezone
++import hashlib
++import json
++from pathlib import Path
++import shutil
++import time
++
++ROOT = Path(__file__).resolve().parents[2]
++FILES = {
++    'checkpoint.pth': 'checkpoint.pth',
++    'training_history.png': 'learning_curve.png',
++    'training_history.csv': 'training_history.csv',
++    'config.yaml': 'config.yaml',
++    'dataset.xlsx': 'dataset.xlsx',
++    'validation_predictions.csv': 'validation_predictions.csv',
++    'validation_metrics.json': 'validation_metrics.json',
++    'validation_confusion_matrix.png': 'validation_confusion_matrix.png',
++    'validation_confusion_matrix.csv': 'validation_confusion_matrix.csv',
++    'training.log': 'training.log',
++    'run_status.json': 'run_status.json',
++}
++
++
++def read(path):
++    return json.loads(Path(path).read_text(encoding='utf-8'))
++
++
++def digest(path):
++    with Path(path).open('rb') as handle:
++        return hashlib.file_digest(handle, 'sha256').hexdigest()
++
++
++def write_json(path, value):
++    temporary = path.with_suffix(path.suffix + '.tmp')
++    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n', encoding='utf-8')
++    temporary.replace(path)
++
++
++def condition(config):
++    matched = config['cohort'].get('matched_sampling')
++    if matched:
++        return 'matched_' + matched['condition']
++    source = config.get('historical', {}).get('run', '')
++    if '_baseline_only_' in source:
++        return 'baseline_only'
++    if '_without_baseline_' in source:
++        return 'non_baseline'
++    return 'full_data' if len(config['cohort']['training_image_ids']) == 508 else 'cohort'
++
++
++def export_run(source, output):
++    source = Path(source).resolve()
++    status, config = read(source / 'run_status.json'), read(source / 'config.yaml')
++    if status['status'] != 'completed' or status.get('smoke') or not status.get('required_outputs_verified'):
++        raise ValueError(f'Only verified completed full runs can be collected: {source}')
++    identifier = config['experiment_id']
++    number = identifier.split('_')[1]
++    label = f'{config["model"]["head"]}__{condition(config)}__seed{config["training"]["seed"]}__{number}_{source.name.split("_")[-1]}'
++    destination = output / label
++    if destination.exists():
++        receipt = read(destination / 'source_run.json')
++        if receipt['source_run'] != str(source):
++            raise FileExistsError(f'Result folder belongs to another run: {destination}')
++        for filename, expected in receipt['file_sha256'].items():
++            if digest(destination / filename) != expected or digest(source / receipt['source_files'][filename]) != expected:
++                raise ValueError(f'Collected result/source changed; refusing overwrite: {destination / filename}')
++    else:
++        staging = output / ('.' + label + '.partial')
++        staging.mkdir(exist_ok=False)
++        hashes, sources = {}, {}
++        selected = dict(FILES)
++        selected.update({p.name: p.name for p in source.glob('validation_binary*_confusion_matrix.csv')})
++        for original, target in selected.items():
++            if not (source / original).is_file():
++                raise FileNotFoundError(source / original)
++            shutil.copy2(source / original, staging / target)
++            hashes[target] = digest(source / original)
++            if digest(staging / target) != hashes[target]:
++                raise ValueError(f'Copy verification failed: {target}')
++            sources[target] = original
++        write_json(staging / 'source_run.json', {'source_run': str(source), 'experiment_id': identifier,
++                   'file_sha256': hashes, 'source_files': sources,
++                   'collected_at_utc': datetime.now(timezone.utc).isoformat(),
++                   'note': 'Verified copies of the completed experiment; original artifacts retained'})
++        staging.rename(destination)
++        print(f'Collected: {label}', flush=True)
++    metrics = read(destination / 'validation_metrics.json')
++    profile = config['dataset'].get('profile')
++    label_version = {'ratings_8cc903b74f9f': 'reviewed_v1', 'ratings_281f9fcc448e': 'reviewed_v2',
++                     'ratings_e4ea1ce05a02': 'pre_review'}.get(profile, profile)
++    row = {'folder': label, 'experiment_id': identifier, 'method': config['model']['head'],
++           'condition': condition(config), 'seed': config['training']['seed'],
++           'label_version': label_version, 'rating_profile': profile,
++           'training_images': len(config['cohort']['training_image_ids']),
++           'monitoring_images': len(config['cohort']['monitor_image_ids']),
++           'validation_images': metrics['image_count'], 'best_epoch': status['selected_epoch'],
++           'learning_rate': config['training']['optimizer_settings']['lr'],
++           'binary_loss_weight': config['loss'].get('binary_loss_weight'),
++           'consensus_qwk': metrics.get('consensus_reference_quadratic_weighted_kappa'),
++           'consensus_mae': metrics.get('consensus_reference_mae'), 'emd': metrics.get('earth_movers_distance')}
++    for key, prefix in [('binary_grade_argmax', 'grade_argmax'), ('binary', 'summed_probability'), ('binary_dedicated_head', 'dedicated_head')]:
++        row.update({prefix+'_'+name: metrics.get(key, {}).get(name) for name in ('f1', 'sensitivity', 'specificity')})
++    return row
++
++
++def collect(queue_status, output):
++    queue = read(queue_status)
++    if queue.get('mode') != 'run':
++        raise ValueError('Collect the full-run queue, not diagnostic smoke runs')
++    output.mkdir(parents=True, exist_ok=True)
++    rows = [export_run(item['run'], output) for item in queue['completed']]
++    summary_pending = False
++    if rows:
++        temporary = output / 'summary.csv.tmp'
++        with temporary.open('w', newline='', encoding='utf-8') as handle:
++            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
++            writer.writeheader()
++            writer.writerows(rows)
++        try:
++            temporary.replace(output / 'summary.csv')
++        except PermissionError:
++            # Excel can keep the CSV locked. Models still collect normally;
++            # refresh the summary on a later pass after the file is released.
++            summary_pending = True
++    write_json(output / 'collection_status.json', {'source_queue': str(queue_status), 'queue_status': queue['status'],
++               'completed_models_collected': len(rows), 'remaining_including_active': len(queue['remaining']),
++               'summary_update_pending': summary_pending,
++               'updated_at_utc': datetime.now(timezone.utc).isoformat()})
++    queue['summary_update_pending'] = summary_pending
++    return queue
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--queue-status', type=Path, required=True)
++    parser.add_argument('--output-dir', type=Path, default=ROOT / 'results')
++    parser.add_argument('--watch', action='store_true', help='Collect new completions until the queue finishes or fails')
++    args = parser.parse_args()
++    while True:
++        try:
++            queue = collect(args.queue_status.resolve(), args.output_dir.resolve())
++        except PermissionError as error:
++            if not args.watch:
++                raise
++            print(f'Waiting for a locked results file: {error}', flush=True)
++            time.sleep(30)
++            continue
++        if not args.watch or (queue['status'] != 'running' and not queue['summary_update_pending']):
++            break
++        time.sleep(30)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/auto_qc/CNN/dataset.py b/auto_qc/CNN/dataset.py
+--- a/auto_qc/CNN/dataset.py
++++ b/auto_qc/CNN/dataset.py
+@@ -1,401 +1,192 @@
++"""Image-level workbook records and the original 3x3 IQAnet patch extraction."""
++from functools import lru_cache
++import hashlib
++import json
++from pathlib import Path
+ 
+-import argparse
+ import numpy as np
+-import os
+ import pandas as pd
+ from PIL import Image
+-from sklearn.model_selection import train_test_split
+ import torch
+ from torch.utils.data import Dataset
+ from torchvision import transforms
+-from torchvision.transforms import ToPILImage
++
++VOTES = [f'target_grade_{k}' for k in range(1, 6)]
++ORDINAL = [f'target_above_grade_{k}' for k in range(1, 5)]
++KINDS = ('hard_ganaav', 'hard_shane', 'ceiling_mean', 'exact_mean', 'soft_categorical', 'ordinal')
++
++
++def image_key(value):
++    text = str(value).strip().replace('\\', '/')
++    path = Path(text)
++    return path.stem if path.suffix.lower() in ('.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp') else path.name
++
++
++def canonical_graders(columns):
++    return ['ganaav_grade' if c == 'previousStudent_grade' else c for c in columns]
++
++
++def canonical_columns(frame):
++    frame = frame.copy()
++    if 'previousStudent_grade' in frame:
++        if 'ganaav_grade' in frame and not np.allclose(pd.to_numeric(frame.ganaav_grade, errors='coerce'),
++                pd.to_numeric(frame.previousStudent_grade, errors='coerce'), equal_nan=True):
++            raise ValueError('Conflicting ganaav / previousStudent aliases')
++        frame = frame.rename(columns={'previousStudent_grade': 'ganaav_grade'}) if 'ganaav_grade' not in frame else frame.drop(columns='previousStudent_grade')
++    if 'split' not in frame and 'mode' in frame:
++        frame['split'] = frame['mode']
++    if 'split' in frame:
++        frame['split'] = frame['split'].replace({'val': 'validation'})
++        frame['mode'] = frame['split'].replace({'validation': 'val'})
++    return frame
++
++
++def ratings_array(frame, graders):
++    graders = canonical_graders(graders)
++    if not graders or len(set(graders)) != len(graders) or not set(graders).issubset(frame.columns):
++        raise ValueError('Select unique existing grader columns')
++    arrays = []
++    for name in graders:
++        raw = frame[name]
++        missing = raw.isna() | raw.astype(str).str.strip().eq('')
++        values = pd.to_numeric(raw.where(~missing), errors='coerce')
++        invalid = ~missing & (~values.isin(range(1, 6)) | raw.map(lambda v: isinstance(v, (bool, np.bool_))))
++        if invalid.any():
++            raise ValueError(f'Invalid integer 1..5 rating in {name}: {frame.loc[invalid, "image_id"].tolist()[:5]}')
++        arrays.append(values.to_numpy(dtype=float))
++    return np.stack(arrays, axis=1)
++
++
++def generate_targets(frame, kind, graders, mean_missing_policy='require_all'):
++    if kind not in KINDS:
++        raise ValueError(f'Unsupported target kind: {kind}')
++    result = canonical_columns(frame)
++    graders = canonical_graders(graders)
++    ratings = ratings_array(result, graders)
++    counts = np.isfinite(ratings).sum(1)
++    votes = np.stack([(ratings == k).sum(1) for k in range(1, 6)], axis=1)
++    votes = np.divide(votes, counts[:, None], out=np.full_like(votes, np.nan, dtype=float), where=counts[:, None] > 0)
++    result[VOTES] = votes
++    result[ORDINAL] = np.stack([votes[:, k:].sum(1) for k in range(1, 5)], axis=1)
++    result['target_binary_unacceptable'] = result[ORDINAL[1]]
++    result['rating_count'] = counts
++    result['eligible'] = counts > 0
++    if kind in ('ceiling_mean', 'exact_mean'):
++        if mean_missing_policy not in ('require_all', 'available'):
++            raise ValueError('Explicit mean missing-rating policy required')
++        result['eligible'] = counts == len(graders) if mean_missing_policy == 'require_all' else counts > 0
++        mean = np.divide(np.nansum(ratings, axis=1), counts, out=np.full(len(frame), np.nan), where=counts > 0)
++        result['target_mean_grade'] = mean
++        if kind == 'ceiling_mean':
++            result['target_grade'] = np.ceil(mean)
++    elif kind in ('hard_ganaav', 'hard_shane'):
++        if graders != (['ganaav_grade'] if kind == 'hard_ganaav' else ['shane_grade']):
++            raise ValueError('Hard target grader does not match kind')
++        result['target_grade'] = ratings[:, 0]
++    if 'target_grade' in result:
++        result['target_class_index'] = result.target_grade - 1
++        result['image_grading'] = result.target_grade
++    elif kind == 'exact_mean':
++        result['image_grading'] = result.target_mean_grade
++    result['target_kind'] = kind
++    result['exclusion_reason'] = np.where(result.eligible, '', 'missing required selected ratings')
++    target_names = VOTES + ORDINAL + ['target_binary_unacceptable', 'target_mean_grade', 'target_grade', 'target_class_index']
++    for name in set(target_names) & set(result):
++        result.loc[~result.eligible, name] = np.nan
++    return result
++
++
++def validate_records(frame, check_files=False, held_out='VISUS-NHP'):
++    required = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
++    if frame.empty or not set(required).issubset(frame):
++        raise ValueError('Explicit image/patient/project/site/split records required before patching')
++    if frame[required].isna().any().any() or frame[required].astype(str).apply(lambda c: c.str.strip().eq('')).any().any():
++        raise ValueError('Empty identity / split metadata')
++    if frame.image_id.duplicated().any() or frame.image_path.map(lambda p: str(Path(p).resolve()).casefold()).duplicated().any():
++        raise ValueError('Duplicate image ID or path')
++    if not frame.image_id.eq(frame.image_path.map(image_key)).all():
++        raise ValueError('Image ID/path mismatch; preserve full variant suffixes')
++    if not frame.split.isin(('train', 'validation', 'test')).all() or frame.groupby('patient_id').split.nunique().gt(1).any():
++        raise ValueError('Invalid split or patient overlap')
++    if not frame.patient_id.eq(frame.image_id.str.split('_').str[:3].str.join('_')).all():
++        raise ValueError('Patient identity differs from original filename crosswalk')
++    if held_out and frame.loc[frame.project.eq(held_out), 'split'].ne('test').any():
++        raise ValueError(f'{held_out} must remain held out')
++    if check_files and not frame.image_path.map(lambda p: Path(p).is_file()).all():
++        raise FileNotFoundError('Missing image paths')
++
++
++def logical_hash(frame):
++    data = frame.sort_values('image_id').sort_index(axis=1).copy()
++    for name in data.select_dtypes(include='number'):
++        data[name] = data[name].astype(float)
++    return hashlib.sha256(data.to_json(orient='split', index=False, double_precision=15).encode()).hexdigest()
++
++
++def save_workbook(path, frame, metadata):
++    path = Path(path)
++    if path.exists():
++        raise FileExistsError(path)
++    metadata = dict(metadata, logical_content_sha256=logical_hash(frame))
++    with pd.ExcelWriter(path, engine='openpyxl') as writer:
++        frame.to_excel(writer, index=False, sheet_name='dataset')
++        pd.DataFrame({'key': list(metadata), 'value': [json.dumps(v, allow_nan=False) for v in metadata.values()]}).to_excel(writer, index=False, sheet_name='metadata')
++
++
++def load_workbook(path, check_files=False):
++    frame = canonical_columns(pd.read_excel(path, sheet_name='dataset')).fillna({'exclusion_reason': ''})
++    values = pd.read_excel(path, sheet_name='metadata')
++    metadata = {row.key: json.loads(row.value) for row in values.itertuples()}
++    validate_records(frame, check_files, metadata.get('held_out_project'))
++    expected = generate_targets(frame.drop(columns=[c for c in frame if c.startswith('target_')] + ['image_grading'], errors='ignore'),
++                                metadata['target_kind'], metadata['graders'], metadata.get('mean_missing_policy', 'require_all'))
++    for name in [c for c in expected if c.startswith('target_') and c != 'target_kind'] + ['rating_count', 'eligible']:
++        if name not in frame or not np.allclose(pd.to_numeric(frame[name]), pd.to_numeric(expected[name]), rtol=0, atol=1e-12, equal_nan=True):
++            raise ValueError(f'Workbook consumed target disagrees with source ratings: {name}')
++    if logical_hash(frame.fillna({'exclusion_reason': ''})) != metadata['logical_content_sha256']:
++        raise ValueError('Workbook logical content hash mismatch')
++    return frame, metadata
++
++
++def target_tensor(frame, kind):
++    if kind in ('hard_ganaav', 'hard_shane', 'ceiling_mean'):
++        return torch.tensor(frame.target_class_index.to_numpy(dtype=np.int64), dtype=torch.long)
++    columns = ORDINAL if kind == 'ordinal' else VOTES if kind == 'soft_categorical' else ['target_mean_grade']
++    values = torch.tensor(frame[columns].to_numpy(dtype=np.float32))
++    return values.squeeze(1) if kind == 'exact_mean' else values
++
++
++def image_transform():
++    return transforms.Compose([transforms.Resize((768, 768)), transforms.Grayscale(num_output_channels=1), transforms.ToTensor()])
++
++
++def extract_patches(path):
++    # Keep original Resize -> Grayscale -> Tensor -> PIL -> grid-crop sequence.
++    with Image.open(path) as image:
++        tensor = image_transform()(image)
++    pil = transforms.ToPILImage()(tensor)
++    return torch.stack([transforms.ToTensor()(pil.crop((c*256, r*256, (c+1)*256, (r+1)*256))) for r in range(3) for c in range(3)])
+ 
+ 
+ class ImageQualityDataset(Dataset):
+-    def __init__(self, data, transform=None, label_mapping=None, base_image_dir=None):
+-        self.transform = transform
+-        self.data = [pd.read_csv(data) if isinstance(data, str) else data][0]
+-        if label_mapping is not None:
+-            self.label_mapping = label_mapping
+-        else:
+-            self._set_label_mapping()
+-
+-        self.base_image_dir = base_image_dir
+-
+-    def _set_label_mapping(self):
+-        unique_labels = self.data['image_grading'].unique()
+-        if set(unique_labels) == set(["Good", "Bad"]):
+-            self.label_mapping = {'Good': 0, 'Bad': 1}
+-        else:
+-            self.label_mapping = {label: idx for idx, label in enumerate(sorted(unique_labels))}
++    """Already split image records exposed as patches, then appended training flips."""
++    def __init__(self, frame, kind, augment=False):
++        self.frame = frame.reset_index(drop=True)
++        self.targets = target_tensor(self.frame, kind)
++        self.augment = augment
++        self.base_length = len(frame) * 9
++        if frame.empty or frame.split.nunique() != 1 or not frame.eligible.all():
++            raise ValueError('Supply one nonempty eligible split before extracting patches')
+ 
+     def __len__(self):
+-        return len(self.data)
++        return self.base_length * (2 if self.augment else 1)
+ 
+-    def __getitem__(self, idx):
+-        image_path = self.data.loc[idx, 'image_filename']
+-        if self.base_image_dir:
+-            image_path = os.path.join(self.base_image_dir, image_path)
+-        quality = self.data.loc[idx, 'image_grading']
++    @lru_cache(maxsize=32)
++    def patches(self, image_index):
++        return extract_patches(self.frame.iloc[image_index].image_path)
+ 
+-        image = Image.open(image_path)
+-
+-        if self.transform:
+-            image = self.transform(image)
+-
+-        # define label index
+-        quality = self.label_mapping[quality]
+-
+-        return image, torch.tensor(quality, dtype=torch.long)
+-
+-
+-def patch_dataset(dataset):
+-    '''Extract patches from a dataset of images.
+-
+-    Args:
+-        dataset (torch.utils.data.Dataset): dataset of images
+-
+-    Returns:
+-        list: list of tuples containing subimages and labels
+-    '''
+-
+-    transformed_data = []
+-
+-    for i in range(len(dataset)):
+-
+-        image, label = dataset[i]
+-
+-        # Calculate patch size
+-        _, height, width = image.size()
+-        sub_image_width = width // 2
+-        sub_image_height = height // 2
+-
+-        # Reshape the image tensor using unfold
+-        unfolded = torch.nn.functional.unfold(
+-            image,
+-            (sub_image_height, sub_image_width),
+-            stride=(sub_image_height, sub_image_width)
+-            )
+-
+-        # Reshape the unfolded tensor to get sub-images
+-        num_patches = unfolded.shape[1]
+-        sub_images = unfolded.view(-1, 1, sub_image_height, sub_image_width)
+-
+-        # Duplicate labels for each sub-image
+-        labels = [label] * num_patches
+-
+-        # Append sub-images and labels to the transformed data
+-        transformed_data.extend(zip(sub_images, labels))
+-
+-    return transformed_data
+-
+-
+-def subsample_subimages(
+-        dataset,
+-        method='+',
+-        patch_size=256,
+-        df=None,
+-        class_labels=True,
+-        grid_size=3
+-        ):
+-
+-    '''Subsample subimages from a dataset of images.
+-
+-    Args:
+-        dataset (torch.utils.data.Dataset): dataset of images
+-        method (str): Subsample method. Options are '+', 'x', 'all'
+-        patch_size (int): size of subimages
+-        df (pandas.DataFrame): dataframe containing image paths and labels
+-        class_labels (bool): whether dataset contains labels
+-        grid_size (int): size of grid to subsample subimages from
+-
+-    Returns:
+-        list: list of tuples containing subimages and labels
+-        pandas.DataFrame: Image paths, labels, and subimage positions
+-    '''
+-
+-    # Define the positions of the subimages in the 3x3 grid
+-    if method == '+':
+-        subimage_positions = [2, 4, 6, 8]
+-    elif method == 'x':
+-        subimage_positions = [1, 3, 5, 7, 9]
+-    elif method == 'all':
+-        subimage_positions = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+-
+-    num_patches = len(subimage_positions)
+-
+-    # Define the transformation to extract subimages
+-    crop_transform = transforms.Compose([
+-        transforms.ToTensor(),
+-    ])
+-
+-    n_samples = len(dataset)
+-
+-    has_mode = df is not None and 'mode' in df.columns
+-
+-    transformed_data = []
+-    for i in range(len(dataset)):
+-
+-        print(f' {i+1}/{n_samples}', end='\r')
+-
+-        if class_labels:
+-            image, label = dataset[i]
+-        else:
+-            image = dataset[i]
+-        
+-        if has_mode:
+-            mode = df.loc[i, 'mode']
+-
+-        subimages = []
+-        for position in subimage_positions:
+-            # Calculate the row and column indices of the subimage position
+-            left = ((position - 1) % grid_size) * patch_size
+-            top = ((position - 1) // grid_size) * patch_size
+-            right = left + patch_size
+-            bottom = top + patch_size
+-
+-            # Crop and transform the subimage
+-            subimage = crop_transform(ToPILImage()(image)
+-                                      .crop((left, top, right, bottom)))
+-            subimages.append(subimage)
+-
+-        # Append sub-images and labels (and mode) to the transformed data
+-        if class_labels:
+-            labels = [label] * num_patches
+-            if has_mode:
+-                modes = [mode] * num_patches
+-                transformed_data.extend(zip(subimages, labels, modes))
+-            else:
+-                transformed_data.extend(zip(subimages, labels))
+-        else:
+-            transformed_data = subimages
+-
+-    if df is not None:
+-        n = len(df)
+-        # duplicate rows len(subimage_positions) times
+-        df = df.loc[df.index.repeat(len(subimage_positions))] \
+-            .reset_index(drop=True)
+-        # add subimage positions
+-        df['subimage_position'] = subimage_positions * n
+-
+-    else:
+-        df = pd.DataFrame(
+-            {
+-                'subimage_position': subimage_positions * n_samples
+-            }
+-        )
+-
+-    return transformed_data, df
+-
+-
+-# Creating data splits
+-def create_split(df, seed):
+-
+-    np.random.seed(seed)
+-
+-    df['project'] = df['image_filename'].str.split('_').str[0]
+-    df['patient_id'] = df['image_filename'].str.split('_').str[:3].str.join('_')
+-
+-    # Getting patient info
+-    patient_info = df.groupby('patient_id').agg({
+-        'project': 'first',
+-        'image_filename': 'count'
+-    }).reset_index()
+-    patient_info.columns = ['patient_id', 'project', 'num_images']
+-
+-    test_patients = []
+-    train_patients = []
+-    val_patients = []
+-
+-    filtered_df = patient_info[patient_info['project'] == "ASTELLAS"]
+-    test_patients += list(filtered_df['patient_id'])
+-
+-    filtered_df = df[df['image_grading'] == 5]
+-    filtered_df = filtered_df[filtered_df['project'] != "ASTELLAS"]
+-    prefixes = (
+-        filtered_df["image_filename"]
+-        .str.split("_")
+-        .str[:3]
+-        .str.join("_")
+-    )
+-    grade_5_patients = list(set(prefixes))
+-    np.random.shuffle(grade_5_patients)
+-
+-    train_patients.append(grade_5_patients[0])
+-    val_patients.append(grade_5_patients[1])
+-    test_patients.append(grade_5_patients[2])
+-
+-    #  Split remaining patients randomly 
+-    assigned = train_patients + val_patients + test_patients
+-    remaining = [p for p in patient_info['patient_id'] if p not in assigned]
+-    remaining_info = patient_info[patient_info['patient_id'].isin(remaining)]
+-    
+-    remaining_test = max(0.1*len(patient_info) - len(test_patients), 0)
+-    remaining_test_size = remaining_test / len(remaining)
+-
+-    # Split remaining patients: first separate test (20%)
+-    try:
+-        train_val_pool, add_test = train_test_split(
+-            remaining,
+-            test_size=remaining_test_size,  # 20% to test
+-            random_state=seed,
+-            stratify=remaining_info['project']
+-        )
+-        test_patients.extend(add_test)
+-
+-        # Split rest into train 87.5% and val 12.5%
+-        pool_info = patient_info[patient_info['patient_id'].isin(train_val_pool)]
+-        add_train, add_val = train_test_split(
+-            train_val_pool,
+-            test_size=0.125,  # 12.5% of the 80% = 10% overall
+-            random_state=seed,
+-            stratify=pool_info['project']
+-        )
+-
+-    except ValueError:
+-        train_val_pool, add_test = train_test_split(
+-            remaining,
+-            test_size=0.20,
+-            random_state=seed
+-        )
+-        test_patients.extend(add_test)
+-
+-        add_train, add_val = train_test_split(
+-            train_val_pool,
+-            test_size=0.125,
+-            random_state=seed
+-        )
+-
+-    train_patients.extend(add_train)
+-    val_patients.extend(add_val)
+-
+-    print(len(train_patients), len(val_patients), len(test_patients))
+-
+-    # Assign mode
+-    df['mode'] = df['patient_id'].apply(
+-        lambda x: 'train' if x in train_patients else 'val' if x in val_patients else 'test'
+-    )
+-
+-    return df
+-
+-
+-# Validate splits
+-def validate_split(df):
+-    # Minimum counts required
+-    min_counts = {
+-        'train': {'1-4': 10, '5': 1},
+-        'val': {'1-4': 5, '5': 1},
+-        'test': {'1-4': 3, '5': 1}
+-    }
+-
+-    for split_name in ['train', 'val', 'test']:
+-        split_data = df[df['mode'] == split_name]
+-        print(len(split_data))
+-
+-        # Check each grade distribution
+-        for grade in range(1, 6):
+-            count = len(split_data[split_data['image_grading'] == grade])
+-            required = min_counts[split_name]['5'] if grade == 5 else min_counts[split_name]['1-4']
+-
+-            if count < required:
+-                return False, f"{split_name} has only {count} Grade {grade} images (need {required})"
+-
+-        # Check split size 
+-        pct = len(split_data) / len(df) * 100
+-        if split_name == 'train' and not (65 <= pct <= 75):
+-            return False, f"train size {pct:.1f}% out of range (65-75%)"
+-        elif split_name == 'val' and not (8 <= pct <= 15):
+-            return False, f"val size {pct:.1f}% out of range (8-15%)"
+-        elif split_name == 'test' and not (15 <= pct <= 25):
+-            return False, f"test size {pct:.1f}% out of range (15-25%)"
+-    
+-
+-    # Check if patient leakage
+-    train_pts = set(df[df['mode'] == 'train']['patient_id'].unique())
+-    val_pts = set(df[df['mode'] == 'val']['patient_id'].unique())
+-    test_pts = set(df[df['mode'] == 'test']['patient_id'].unique())
+-
+-    if len(train_pts & val_pts) > 0 or len(train_pts & test_pts) > 0 or len(val_pts & test_pts) > 0:
+-        return False, "Patient leakage"
+-
+-    return True, "Valid"
+-
+-
+-# Generate splits
+-def generate_monte_carlo_splits(csv_path, output_dir, n_valid_splits=5, max_attempts=100, seed=None):
+-    # Create output directory
+-    os.makedirs(output_dir, exist_ok=True)
+-
+-    print(f"generating {n_valid_splits} Monte Carlo splits (Target: 70/10/20)")
+-
+-    # Load data once
+-    df_original = pd.read_csv(csv_path)
+-    
+-    valid_splits = []
+-    attempt = 1
+-
+-    if seed is None:
+-        seed = np.random.randint(0, 100000)
+-    
+-    while len(valid_splits) < n_valid_splits and attempt < max_attempts:
+-        
+-        # Create split
+-        df_split = df_original.copy()
+-        df_split = create_split(df_split, seed)
+-        
+-        # Validate
+-        is_valid, message = validate_split(df_split)
+-        
+-        if is_valid:
+-            # Save split
+-            output_file = os.path.join(output_dir, f'multi_class_qc_dataset_seed_{seed}.csv')
+-            df_split.to_csv(output_file, index=False)
+-            
+-            # Get split percentages
+-            train_pct = len(df_split[df_split['mode'] == 'train']) / len(df_split) * 100
+-            val_pct = len(df_split[df_split['mode'] == 'val']) / len(df_split) * 100
+-            test_pct = len(df_split[df_split['mode'] == 'test']) / len(df_split) * 100
+-            
+-            valid_splits.append(seed)
+-            print(f"Attempt {attempt}: Seed {seed} valid ({train_pct:.1f}/{val_pct:.1f}/{test_pct:.1f}) saved")
+-        else:
+-            print(f"Attempt {attempt}: Seed {seed} failed ({message})")
+-        
+-        attempt += 1
+-        seed += 1
+-    
+-    # Summary
+-    print("\n")
+-    print("summary of Monte Carlo splits (RANDOM TEST SET)")
+-    print(f"\nValid seeds: {valid_splits}")
+-    
+-    # Save summary
+-    summary_file = os.path.join(output_dir, 'splits_summary_random.txt')
+-    with open(summary_file, 'w') as f:
+-        f.write("Monte Carlo Splits Summary - RANDOM TEST SET\n")
+-        f.write("\n")
+-        f.write("Target split: 70/10/20 (train/val/test)\n")
+-        f.write("Valid splits: {len(valid_splits)}\n")
+-        f.write("\nValid seeds:\n")
+-        for seed in valid_splits:
+-            f.write(f"  - {seed}\n")
+-    
+-    print(f"\n Summary saved to: {summary_file}")
+-
+-
+-# Run
+-if __name__ == "__main__":
+-    parser = argparse.ArgumentParser(description='Create Monte Carlo data splits')
+-    parser.add_argument('--dataset_csv_path', type=str, required=True, help='path to dataset containing images and labels')
+-    parser.add_argument('--output_dir', type=str, required=True, help='Directory to output csv files')
+-    parser.add_argument('--start_seed', type=int, default=1)
+-
+-    args = parser.parse_args()
+-
+-    generate_monte_carlo_splits(
+-        csv_path=args.dataset_csv_path,
+-        output_dir=args.output_dir,
+-        n_valid_splits=1,
+-        max_attempts=100,
+-        seed=args.start_seed
+-    )
++    def __getitem__(self, index):
++        flipped = index >= self.base_length
++        image_index, patch = divmod(index % self.base_length, 9)
++        value = self.patches(image_index)[patch]
++        return (value.flip(-1) if flipped else value), self.targets[image_index]
+diff --git a/auto_qc/CNN/generate_datasets.py b/auto_qc/CNN/generate_datasets.py
+new file mode 100644
+--- /dev/null
++++ b/auto_qc/CNN/generate_datasets.py
+@@ -0,0 +1,153 @@
++"""Generate all target workbooks from hash-pinned ratings and one saved split."""
++import argparse
++from pathlib import Path
++import shutil
++
++import numpy as np
++import pandas as pd
++
++from .dataset import (canonical_columns, canonical_graders, generate_targets, image_key,
++                      logical_hash, ratings_array, save_workbook, load_workbook, validate_records)
++from .utils import ROOT, read_config, sha256, write_json
++
++VARIANTS = {
++    'ganaav_labels.xlsx': ('hard_ganaav', ['ganaav_grade']),
++    'shane_labels.xlsx': ('hard_shane', ['shane_grade']),
++    'ganaav_shane_ceiling_labels.xlsx': ('ceiling_mean', ['ganaav_grade', 'shane_grade']),
++    'ganaav_shane_mean_labels.xlsx': ('exact_mean', ['ganaav_grade', 'shane_grade']),
++    'ganaav_shane_soft_labels.xlsx': ('soft_categorical', ['ganaav_grade', 'shane_grade']),
++    'multigrader_soft_labels.xlsx': ('soft_categorical', None),
++    'multigrader_mean_labels.xlsx': ('exact_mean', None),
++    'ordinal_targets.xlsx': ('ordinal', None),
++}
++RULES = {
++    'hard_ganaav': 'ganaav integer grade; class_index=grade-1',
++    'hard_shane': 'shane integer grade; class_index=grade-1',
++    'ceiling_mean': 'ceil(arithmetic mean), all selected ratings required',
++    'exact_mean': 'exact arithmetic mean; paired mean requires both, historical multigrader mean ignores missing',
++    'soft_categorical': 'fraction of available selected votes for each grade 1..5; equal image weight',
++    'ordinal': 'P(grade>1),P(grade>2),P(grade>3),P(grade>4); available selected votes only',
++}
++
++
++def pinned_table(spec, excel=False):
++    path = ROOT / spec['path']
++    if sha256(path) != spec['sha256']:
++        raise ValueError(f'Input hash mismatch: {path}')
++    table = pd.read_excel(path, sheet_name=spec.get('sheet', 'Grades')) if excel else pd.read_csv(path)
++    table = canonical_columns(table)
++    if 'image_id' not in table:
++        table['image_id'] = table.image_filename.map(image_key)
++    if table.image_id.isna().any() or table.image_id.eq('').any() or table.image_id.duplicated().any():
++        raise ValueError(f'Duplicate/missing full IDs in {path}')
++    return table
++
++
++def join_sources(build, profile):
++    split = pinned_table(build['split'])
++    # Only assignment/identity columns, never the carrier manifest's rating values.
++    fields = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
++    result = split[fields].sort_values('image_id').reset_index(drop=True)
++    ganaav = pinned_table(build['ganaav'])
++    shane = pinned_table(build['shane'])
++    allowed = set(build['allowed_unmatched_ids'])
++    exclusions = []
++    for name, source in [('ganaav', ganaav), ('shane', shane)]:
++        unknown = set(source.image_id) - set(result.image_id)
++        if unknown - allowed:
++            raise ValueError(f'Unapproved unmatched {name} IDs: {sorted(unknown-allowed)}')
++        exclusions += [{'source': name, 'image_id': value, 'reason': 'outside fixed paired population'} for value in sorted(unknown)]
++        aligned = source.set_index('image_id').reindex(result.image_id)
++        for field in ('patient_id', 'project', 'project_site'):
++            if field in aligned:
++                supplied = aligned[field].notna()
++                if (supplied.to_numpy() & aligned[field].ne(result[field].to_numpy()).to_numpy()).any():
++                    raise ValueError(f'{name} metadata conflict: {field}')
++        result[name+'_grade'] = aligned.image_grading.to_numpy()
++        result[name+'_original_grade'] = aligned.image_grading.to_numpy()
++        result[name+'_source_filename'] = aligned.image_filename.to_numpy()
++    changes = []
++    snapshot = pinned_table(profile['ratings'], excel=True)
++    unknown = set(snapshot.image_id)-set(result.image_id)
++    if unknown - allowed:
++        raise ValueError('Unapproved unmatched rating snapshot IDs')
++    aligned = snapshot.set_index('image_id').reindex(result.image_id)
++    if not np.allclose(pd.to_numeric(aligned.ganaav_grade), result.ganaav_grade, equal_nan=True):
++        raise ValueError('Historical ganaav ratings disagree with original source')
++    for name in canonical_graders(profile['graders']):
++        values = pd.to_numeric(aligned[name], errors='raise').to_numpy(dtype=float)
++        if name == 'shane_grade':
++            changed = ~np.isclose(result.shane_grade, values, equal_nan=True)
++            changes = [{'image_id': result.iloc[i].image_id, 'original': float(result.iloc[i].shane_grade),
++                        'selected': float(values[i]), 'split': result.iloc[i].split} for i in np.flatnonzero(changed)]
++        result[name] = values
++    if len(changes) != profile['expected_shane_changes']:
++        raise ValueError('Selected rating-version change count differs')
++    ratings_array(result, profile['graders'])
++    result['image_filename'] = result.image_path
++    result = canonical_columns(result)
++    validate_records(result, check_files=True)
++    return result, exclusions, changes
++
++
++def build_datasets(config_path, verify_existing=False, output_dir=None):
++    build = read_config(config_path)
++    if output_dir is not None:
++        build['output_dir'] = str(output_dir)
++    code = ROOT / build['output_dir'] / build['profiles'][0]['name'] / '_generation_code'
++    if not verify_existing:
++        for profile in build['profiles']:
++            directory = ROOT / build['output_dir'] / profile['name']
++            if directory.exists():
++                raise FileExistsError(directory)
++        code.mkdir(parents=True, exist_ok=False)
++        for name in ('dataset.py', 'generate_datasets.py', 'utils.py'):
++            shutil.copyfile(Path(__file__).with_name(name), code / name)
++    summary = []
++    for profile in build['profiles']:
++        directory = ROOT / build['output_dir'] / profile['name']
++        frame, exclusions, changes = join_sources(build, profile)
++        directory.mkdir(parents=True, exist_ok=True)
++        for filename, (kind, selected) in VARIANTS.items():
++            graders = canonical_graders(selected or profile['graders'])
++            dataset = generate_targets(frame, kind, graders, 'available' if selected is None else 'require_all')
++            metadata = {'schema': 'autoqc_dataset_v1', 'target_kind': kind, 'graders': graders,
++                        'mean_missing_policy': 'available' if selected is None else 'require_all',
++                        'label_rule': RULES[kind], 'grade_order': [1, 2, 3, 4, 5],
++                        'ganaav_identity': 'confirmed by project owner; previousStudent is the historical alias',
++                        'shane_source_authority': build['shane_authority'], 'rating_profile': profile['name'],
++                        'sources': {key: build[key] for key in ('ganaav', 'shane', 'split')},
++                        'selected_rating_snapshot': profile['ratings'], 'review_changes': changes,
++                        'held_out_project': 'VISUS-NHP', 'source_exclusions': exclusions,
++                        'generation_code_snapshot': str(code),
++                        'generator_sha256': sha256(__file__), 'dataset_module_sha256': sha256(Path(__file__).with_name('dataset.py'))}
++            path = directory / filename
++            if verify_existing and path.exists():
++                saved, _ = load_workbook(path)
++                if logical_hash(saved.fillna({'exclusion_reason': ''})) != logical_hash(dataset):
++                    raise ValueError(f'Regeneration differs: {path}')
++            else:
++                save_workbook(path, dataset, metadata)
++                load_workbook(path, check_files=True)
++            summary.append({'path': str(path.relative_to(ROOT)), 'images': len(dataset), 'eligible': int(dataset.eligible.sum()),
++                            'logical_sha256': logical_hash(dataset), 'file_sha256': sha256(path)})
++        if not verify_existing:
++            pd.DataFrame(exclusions).to_csv(directory / 'exclusions.csv', index=False)
++            pd.DataFrame(changes, columns=['image_id', 'original', 'selected', 'split']).to_csv(directory / 'rating_changes.csv', index=False)
++    if not verify_existing:
++        write_json(ROOT / build['output_dir'] / 'build_results.json', summary)
++    print(f'{len(summary)} workbooks {"verified" if verify_existing else "generated"}; no splits regenerated')
++    return summary
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--config', type=Path, default=Path('configs/datasets.yaml'))
++    parser.add_argument('--verify-existing', action='store_true')
++    parser.add_argument('--output-dir', type=Path, help='New output directory; never overwrites an existing build')
++    args = parser.parse_args()
++    build_datasets(args.config, args.verify_existing, args.output_dir)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/auto_qc/CNN/kfold.py b/auto_qc/CNN/kfold.py
+deleted file mode 100644
+--- a/auto_qc/CNN/kfold.py
++++ /dev/null
+@@ -1,310 +0,0 @@
+-import os
+-import argparse
+-import pandas as pd
+-
+-import torch
+-import torch.nn as nn
+-import torch.optim as optim
+-from torchvision import transforms
+-from torch.utils.data import DataLoader, Subset
+-from sklearn.model_selection import KFold
+-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
+-
+-from model import IQAnet
+-from dataset import ImageQualityDataset, subsample_subimages
+-
+-
+-
+-
+-def extract_metrics(y, yhat):
+-
+-    metrics = {
+-        'cm' : str(confusion_matrix(y, yhat, labels=[1, 0])),
+-        'precision' : precision_score(y, yhat, pos_label=1),
+-        'recall' : recall_score(y, yhat, pos_label=1),
+-        'f1' : f1_score(y, yhat),
+-        'accuracy' : sum([1 if label == prediction else 0 for label, prediction in zip(y, yhat)]) / len(y)
+-    }
+-
+-    return metrics
+-
+-
+-def class_balance(train_loader, val_loader):
+-
+-    set_class_weights = {'Training': None, 'Validation': None}
+-    
+-    for loader_label, loader in zip(['Training', 'Validation'], [train_loader, val_loader]):
+-        # print the class distribution for the fold
+-        class_counts = {}
+-        for _, labels in loader:
+-            for label in labels:
+-
+-                if label.item() not in class_counts:
+-                    class_counts[label.item()] = 0
+-                class_counts[label.item()] += 1
+-
+-        label_sum = sum(class_counts.values())
+-        n_classes = len(class_counts)
+-
+-        # Print the class distribution
+-        class_weight = {}
+-        for class_label, count in class_counts.items():
+-            print(f"{loader_label} Class {class_label}: {count} samples")
+-            class_weight[class_label] = label_sum / (n_classes * count)
+-
+-        for weight_label, weight in class_weight.items():
+-            print(f"{loader_label} Class {weight_label} Weight: {weight}")
+-
+-        set_class_weights[loader_label] = class_weight
+-        
+-        return set_class_weights['Training'], set_class_weights['Validation']
+-
+-
+-
+-
+-def train(model, train_loader, val_loader, criterion, optimizer, device):
+-
+-    # Training
+-    model.train()
+-    train_loss = 0.0
+-    for i, (inputs, targets) in enumerate(train_loader):
+-
+-        # Move inputs and targets to device
+-        inputs = inputs.to(device)
+-        targets = targets.to(device)
+-
+-        # Zero gradients
+-        optimizer.zero_grad()
+-        
+-        # Forward pass
+-        class_prob = model(inputs)
+-        loss = criterion(class_prob, targets)
+-        
+-        # Backward pass / optimization
+-        loss.backward()
+-        optimizer.step()
+-        
+-        train_loss += loss.item() * inputs.size(0)
+-        print(f"Batch {i + 1}/{len(train_loader)} - Loss: {loss.item():.4f}", end='\r')
+-    train_loss /= len(train_loader.dataset)
+-
+-    # Validation
+-    model.eval()
+-    val_loss = 0.0
+-    with torch.no_grad():
+-        for inputs, targets in val_loader:
+-            inputs = inputs.to(device)
+-            targets = targets.to(device)
+-            class_prob = model(inputs)
+-            loss = criterion(class_prob, targets)
+-            val_loss += loss.item() * inputs.size(0)
+-        val_loss /= len(val_loader.dataset)
+-
+-
+-    return train_loss, val_loss
+-
+-
+-
+-
+-def main():
+-    parser = argparse.ArgumentParser(description='Train a model to classify the quality of images')
+-    parser.add_argument('--seed', type=int, default=42, help='random seed')
+-    parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+-    parser.add_argument('--epochs', type=int, default=1000, help='number of epochs')
+-    parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate')
+-    parser.add_argument('--patience', type=int, default=20, help='patience for early stopping')
+-    parser.add_argument('--k_folds', type=int, default=10, help='number of folds for k-fold cross validation')
+-    parser.add_argument('--test_split', type=float, default=0.10, help='percentage of dataset to use for testing')
+-    parser.add_argument('--csv_path', type=str, help='path to label csv file')
+-    parser.add_argument('--model_path', type=str, help='dir path to save models')
+-    parser.add_argument('--learning_path', type=str, help='dir path to save csv outputs')
+-    args = parser.parse_args()
+-
+-
+-    device = torch.device("mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu"))
+-    print('Using device:', device)
+-
+-
+-    label_mapping = {
+-        'Good': 0, 
+-        'Bad': 1
+-    }
+-
+-    transform = transforms.Compose([
+-        transforms.Resize((768, 768)),
+-        transforms.Grayscale(num_output_channels=1),
+-        transforms.ToTensor()
+-    ])
+-
+-    # setup output dirs
+-    if not os.path.exists(args.model_path):
+-        os.makedirs(args.model_path)
+-    if not os.path.exists(args.learning_path):
+-        os.makedirs(args.learning_path)
+-
+-    df = pd.read_csv(args.csv_path)
+-
+-    print('Loading dataset...')
+-    dataset = ImageQualityDataset(df, transform, label_mapping)
+-    print('Patching dataset...')
+-    patched_dataset, df = subsample_subimages(dataset, method='all', df=df)
+-
+-    # split test from train
+-    test_size = int(len(patched_dataset) * args.test_split)
+-    train_size = len(patched_dataset) - test_size
+-    train_dataset, test_dataset = torch.utils.data.random_split(patched_dataset, [train_size, test_size])
+-
+-
+-
+-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
+-
+-    print(f"\nOriginal Dataset size: {len(dataset)}, Patched Dataset size: {len(patched_dataset)}")
+-    print(f"\nTrain size: {len(train_dataset)}, Test size: {len(test_dataset)}")
+-    print(f"\nImage size (H, W): {patched_dataset[0][0].shape[1:]}")
+-
+-
+-    # outputs
+-    epoch_df = pd.DataFrame()
+-    test_df = pd.DataFrame()
+-
+-    augment = transforms.Compose([
+-        transforms.RandomHorizontalFlip(p=1.0),
+-    ])    
+-
+-
+-    # kfold loop
+-    kfold = KFold(n_splits=args.k_folds, shuffle=True, random_state=args.seed)
+-    for fold, (train_ix, val_ix) in enumerate(kfold.split(train_dataset)):
+-        
+-        # augment training data
+-        train_set = [patched_dataset[i] for i in train_ix]
+-
+-        # append
+-        for i in range(len(train_set)):
+-            train_set.append((augment(train_set[i][0]), train_set[i][1]))
+-
+-        # Create data loaders for this fold
+-        train_loader = DataLoader(
+-            train_set,
+-            batch_size=args.batch_size
+-        )
+-        val_loader = DataLoader(
+-            [patched_dataset[i] for i in val_ix], 
+-            batch_size=args.batch_size
+-        )
+-
+-        print(f"\nFold {fold + 1}, Training size: {len(train_ix)}, Augmented size: {len(train_set)}, Validation size: {len(val_ix)}")
+-
+-        # Print the class distribution for this fold
+-        train_class_ratio,_ = class_balance(train_loader, val_loader)
+-
+-        # Initialize the model
+-        model = IQAnet()
+-        model.to(device)
+-
+-        # Define loss function and optimizer
+-        criterion = nn.CrossEntropyLoss(weight=torch.tensor(list(train_class_ratio.values()))).to(device)
+-        optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
+-
+-        # Initialize variables for tracking best model and early stopping
+-        best_val_loss = float('inf')
+-        early_stopping_counter = 0
+-
+-        # epoch loop
+-        for epoch in range(args.epochs):
+-
+-            # Train & val the model for this epoch
+-            train_loss, val_loss = train(
+-                model, 
+-                train_loader, 
+-                val_loader, 
+-                criterion, 
+-                optimizer, 
+-                device
+-            )
+-
+-            print(f"Fold {fold + 1} Epoch {epoch + 1}/{args.epochs}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+-
+-            # save the learning curve
+-            epoch_dict = {
+-                'fold' : fold + 1, 
+-                'epoch' : epoch + 1, 
+-                'train_loss' : train_loss, 
+-                'val_loss' : val_loss
+-            }
+-
+-            epoch_df = pd.concat(
+-                [epoch_df, pd.DataFrame(epoch_dict, index=[0])], 
+-                ignore_index=True, 
+-                axis=0
+-            )
+-            
+-            pd.DataFrame(epoch_df).to_csv(
+-                f"{args.learning_path}/kfold_learning_curves.csv", 
+-                index=False
+-            )
+-
+-
+-            # Check for early stopping
+-            if val_loss < best_val_loss:
+-                best_val_loss = val_loss
+-                best_model = model.state_dict()
+-                early_stopping_counter = 0
+-            else:
+-                early_stopping_counter += 1
+-                if early_stopping_counter >= args.patience:
+-                    print("Early stopping triggered!")
+-                    break
+-
+-
+-        # Save the best model from this fold
+-        best_model_path = f"{args.model_path}/best_model_fold_{fold}.pth"
+-        torch.save(best_model, best_model_path)
+-
+-        # Load the best model from this fold
+-        model.load_state_dict(best_model)
+-        model.eval()
+-
+-        # Evaluate the best model from this fold on the test set
+-        test_loss = 0.0
+-
+-        y_all = []
+-        yhat_all = []
+-        with torch.no_grad():
+-            for inputs, targets in test_loader:
+-                inputs = inputs.to(device)
+-                targets = targets.to(device)
+-                class_prob = model(inputs)
+-                loss = criterion(class_prob, targets)
+-                test_loss += loss.item() * inputs.size(0)
+-                _, preds = torch.max(class_prob, 1)
+-                y_all.extend(targets.cpu().numpy())
+-                yhat_all.extend(preds.cpu().numpy())
+-            test_loss /= len(test_loader.dataset)
+-            print(f"Test Loss = {test_loss:.4f}")
+-
+-
+-        print('Assesing held-out test set...') 
+-        test_dict = {
+-            'fold' : fold + 1,
+-            'epoch' : epoch + 1,
+-            'test_loss' : test_loss,
+-        }
+-
+-        # extract metrics & save 
+-        test_dict = test_dict | extract_metrics(y_all, yhat_all)
+-        
+-        test_df = pd.concat(
+-            [test_df, pd.DataFrame(test_dict, index=[0])], 
+-            ignore_index=True, 
+-            axis=0
+-        )
+-
+-        test_df.to_csv(f"{args.learning_path}/kfold_test_metrics.csv", index=False)
+-        print(f"Fold {fold + 1} Test Loss: {test_loss:.4f}")
+-
+-
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/auto_qc/CNN/losses.py b/auto_qc/CNN/losses.py
+new file mode 100644
+--- /dev/null
++++ b/auto_qc/CNN/losses.py
+@@ -0,0 +1,82 @@
++"""Previously used objectives; explicit reductions and inference-only PAVA."""
++import torch
++from torch.nn import functional as F
++
++PROJECTION = 'inference_only_unweighted_least_squares_descending_pava_v1'
++
++
++def loss_components(outputs, targets, settings, weights=None):
++    name = settings['name']
++    logits, binary = outputs if isinstance(outputs, tuple) else (outputs, None)
++    if not torch.isfinite(logits).all() or not torch.isfinite(targets).all():
++        raise ValueError('Non-finite logits or targets')
++    if name == 'hard_ce':
++        primary = F.cross_entropy(logits, targets, weight=weights)
++    elif name == 'soft_ce':
++        terms = -targets * F.log_softmax(logits, dim=1)
++        primary = (terms if weights is None else terms * weights).sum(1).mean()
++    elif name == 'continuous_cdw_ce':
++        alpha = settings['alpha']
++        if not isinstance(alpha, (int, float)) or not 0 < alpha < float('inf') or targets.ndim != 1 or ((targets < 1) | (targets > 5)).any():
++            raise ValueError('CDW requires positive alpha and continuous grades in [1,5]')
++        distance = (torch.arange(1, 6, device=logits.device)[None, :] - targets[:, None]).abs().pow(alpha)
++        primary = -(distance * torch.log((1-logits.softmax(1)).clamp(min=1e-7))).sum(1).mean()
++    elif name in ('ordinal_bce', 'joint_bce', 'binary_bce'):
++        if logits.shape != targets.shape or logits.shape[1] != 4 or ((targets < 0) | (targets > 1)).any() or (targets[:, 1:] > targets[:, :-1]).any():
++            raise ValueError('Four descending cumulative targets required')
++        primary = logits.new_zeros(()) if name == 'binary_bce' else F.binary_cross_entropy_with_logits(logits, targets, reduction='none').sum(1).mean()
++    else:
++        raise ValueError(f'Unknown loss: {name}')
++    auxiliary = F.binary_cross_entropy_with_logits(binary, targets[:, 1]) if binary is not None else primary.new_zeros(())
++    if name == 'joint_bce':
++        total = primary + settings['binary_loss_weight'] * auxiliary
++    elif name == 'binary_bce':
++        primary, total = auxiliary, auxiliary
++    else:
++        total = primary
++    return primary, auxiliary, total
++
++
++def isotonic_projection(q):
++    """Our inference adaptation, not specified by the OR-Soft paper. No sorting."""
++    if q.ndim != 2 or q.shape[1] != 4 or not torch.isfinite(q).all() or ((q < 0) | (q > 1)).any():
++        raise ValueError('Four finite sigmoid probabilities required')
++    rows = []
++    for row in q.detach().cpu().double().tolist():
++        blocks = []
++        for value in row:
++            blocks.append((value, 1))
++            while len(blocks) > 1 and blocks[-2][0] < blocks[-1][0]:
++                right, nr = blocks.pop()
++                left, nl = blocks.pop()
++                blocks.append(((left*nl + right*nr)/(nl+nr), nl+nr))
++        rows.append([value for value, n in blocks for _ in range(n)])
++    return torch.tensor(rows, dtype=q.dtype, device=q.device).reshape(q.shape)
++
++
++def grade_probabilities(logits, head):
++    if head == 'five_logits':
++        p = logits.softmax(1)
++    else:
++        q = logits.sigmoid()
++        if head != 'coral':
++            q = isotonic_projection(q)
++        if (q[:, 1:] > q[:, :-1]).any():
++            raise ValueError('Cumulative probabilities inconsistent')
++        p = torch.cat((1-q[:, :1], q[:, :-1]-q[:, 1:], q[:, -1:]), 1)
++    if not torch.isfinite(p).all() or (p < 0).any() or not torch.allclose(p.sum(1), torch.ones_like(p[:, 0]), atol=1e-6, rtol=0):
++        raise ValueError('Invalid reconstructed grade probabilities')
++    return p
++
++
++def ordering_diagnostics(q):
++    projected = isotonic_projection(q)
++    gaps = (q[:, 1:]-q[:, :-1]).clamp_min(0)
++    changed = (q != projected).any(1)
++    return {'patch_count': len(q), 'violating_patch_count': int((gaps > 0).any(1).sum()),
++            'violating_patch_fraction': float((gaps > 0).any(1).float().mean()),
++            'violating_pair_fraction': float((gaps > 0).float().mean()), 'maximum_positive_gap': float(gaps.max()),
++            'mean_positive_gap_all_pairs': float(gaps.mean()),
++            'projection_changed_patch_count': int(changed.sum()), 'projection_changed_patch_fraction': float(changed.float().mean()),
++            'projection_mean_absolute_change': float((q-projected).abs().mean()),
++            'projection_policy': PROJECTION, 'projection_origin': 'Our inference-only adaptation, not specified by the paper'}
+diff --git a/auto_qc/CNN/metrics.py b/auto_qc/CNN/metrics.py
+new file mode 100644
+--- /dev/null
++++ b/auto_qc/CNN/metrics.py
+@@ -0,0 +1,280 @@
++from .dataset import generate_targets
++
++"""Evaluation only: grades 1-2 acceptable, grades 3-5 unacceptable (positive).
++
++Binary references use available individual votes. Ties are assumed acceptable;
++this evaluation convention is not adjudicated ground truth. Every image counts once.
++"""
++import numpy as np
++import pandas as pd
++
++
++def validate_threshold(threshold):
++    if not np.isfinite(threshold) or not 0 <= threshold <= 1:
++        raise ValueError('Binary threshold must be finite and between 0 and 1')
++    return float(threshold)
++
++
++def _scores(reference, predicted):
++    tp = int((reference & predicted).sum())
++    tn = int((~reference & ~predicted).sum())
++    fp = int((~reference & predicted).sum())
++    fn = int((reference & ~predicted).sum())
++    result = {'image_count': len(reference), 'reference_acceptable_count': tn + fp,
++              'reference_unacceptable_count': tp + fn, 'TP': tp, 'TN': tn, 'FP': fp, 'FN': fn}
++    reasons = {}
++    def ratio(name, numerator, denominator, reason):
++        result[name] = float(numerator / denominator) if denominator else None
++        reasons[name] = None if denominator else reason
++    ratio('exact_accuracy', tp + tn, len(reference), 'No images')
++    ratio('sensitivity', tp, tp + fn, 'No reference unacceptable images')
++    ratio('specificity', tn, tn + fp, 'No reference acceptable images')
++    ratio('precision', tp, tp + fp, 'No predicted unacceptable images')
++    ratio('f1', 2 * tp, 2 * tp + fp + fn, 'No reference or predicted unacceptable images')
++    defined = result['sensitivity'] is not None and result['specificity'] is not None
++    result['balanced_accuracy'] = (result['sensitivity'] + result['specificity']) / 2 if defined else None
++    reasons['balanced_accuracy'] = None if defined else 'Both reference classes are required'
++    result['undefined_reasons'] = reasons
++    return result
++
++
++def calculate_binary_metrics(votes, probabilities, threshold=0.5):
++    """Consume validated integer five-grade votes and whole-image probabilities."""
++    threshold = validate_threshold(threshold)
++    votes, probabilities = np.asarray(votes), np.asarray(probabilities, dtype=float)
++    if (votes.ndim != 2 or votes.shape[1] != 5 or not len(votes)
++            or probabilities.shape != votes.shape or not np.isfinite(votes).all()
++            or (votes < 0).any() or (votes != np.floor(votes)).any()
++            or (votes.sum(1) == 0).any()):
++        raise ValueError('Expected nonempty [images, 5] integer votes and matching probabilities')
++    if (not np.isfinite(probabilities).all() or (probabilities < 0).any()
++            or (probabilities > 1).any()
++            or not np.allclose(probabilities.sum(1), 1, rtol=0, atol=1e-5)):
++        raise ValueError('Expected finite probabilities summing to one')
++    acceptable_votes = votes[:, :2].sum(1)
++    unacceptable_votes = votes[:, 2:].sum(1)
++    count = votes.sum(1)
++    tied = acceptable_votes == unacceptable_votes
++    reference = unacceptable_votes > acceptable_votes
++    p_acceptable = probabilities[:, :2].sum(1)
++    p_unacceptable = probabilities[:, 2:].sum(1)
++    predicted = p_unacceptable >= threshold
++    metrics = _scores(reference, predicted)
++    metrics.update({
++        'decision_threshold': threshold, 'positive_class': 'unacceptable',
++        'acceptable_grades': [1, 2], 'unacceptable_grades': [3, 4, 5],
++        'reference_tie_count': int(tied.sum()), 'reference_tie_percentage': float(tied.mean() * 100),
++        'reference_convention': 'Majority of available individual binary grader votes; ties are assumed acceptable. This is an evaluation convention, not adjudicated ground truth.',
++        'prediction_rule': 'sum of whole-image probabilities for grades 3-5 >= decision_threshold',
++        'aggregation': 'equal weight per image; missing ratings ignored',
++        'unique_majority': _scores(reference[~tied], predicted[~tied]),
++    })
++    details = pd.DataFrame({
++        'p_acceptable': p_acceptable, 'p_unacceptable': p_unacceptable,
++        'rating_count': count, 'acceptable_vote_count': acceptable_votes,
++        'unacceptable_vote_count': unacceptable_votes,
++        'acceptable_vote_proportion': acceptable_votes / count,
++        'unacceptable_vote_proportion': unacceptable_votes / count,
++        'binary_reference': np.where(reference, 'unacceptable', 'acceptable'),
++        'binary_prediction': np.where(predicted, 'unacceptable', 'acceptable'),
++        'binary_reference_tied': tied,
++        'binary_confusion_outcome': np.where(reference, np.where(predicted, 'TP', 'FN'),
++                                             np.where(predicted, 'FP', 'TN')),
++    })
++    return metrics, details
++
++
++def calculate_binary_methods(votes, probabilities, threshold=0.5):
++    """Score two decision rules against identical votes; preserve legacy sum fields."""
++    summed, details = calculate_binary_metrics(votes, probabilities, threshold)
++    summed['method'] = 'summed_probability'
++    predicted_grade = np.asarray(probabilities).argmax(axis=1) + 1
++    predicted = predicted_grade >= 3
++    reference = details.binary_reference.eq('unacceptable').to_numpy()
++    tied = details.binary_reference_tied.to_numpy()
++    grade = _scores(reference, predicted)
++    grade.update({key: summed[key] for key in (
++        'positive_class', 'acceptable_grades', 'unacceptable_grades',
++        'reference_tie_count', 'reference_tie_percentage', 'reference_convention', 'aggregation')})
++    grade.update({'method': 'grade_argmax', 'decision_threshold': None,
++                  'decision_threshold_reason': 'Not applicable: argmax over five grade probabilities, then map grade to binary class',
++                  'prediction_rule': 'argmax of five whole-image grade probabilities + 1; grades 3-5 predict unacceptable',
++                  'grade_probability_tie_rule': 'Exact highest-probability ties select the lowest numeric grade; no rounding',
++                  'unique_majority': _scores(reference[~tied], predicted[~tied])})
++    details['binary_summed_probability_prediction'] = details.binary_prediction
++    details['binary_summed_probability_confusion_outcome'] = details.binary_confusion_outcome
++    details['binary_grade_argmax_grade'] = predicted_grade
++    details['binary_grade_argmax_prediction'] = np.where(predicted, 'unacceptable', 'acceptable')
++    details['binary_grade_argmax_confusion_outcome'] = np.where(reference, np.where(predicted, 'TP', 'FN'),
++                                                              np.where(predicted, 'FP', 'TN'))
++    disagree = details.binary_summed_probability_prediction.ne(details.binary_grade_argmax_prediction)
++    details['binary_methods_disagree'] = disagree
++    agreement = {'disagreement_count': int(disagree.sum()), 'disagreement_percentage': float(disagree.mean() * 100)}
++    return summed, grade, agreement, details
++
++
++
++
++
++
++def calculate_binary_head_metrics(votes, probabilities, threshold=.5):
++    """Separate binary probabilities; hard references keep the existing vote policy."""
++    threshold = validate_threshold(threshold)
++    votes, probabilities = np.asarray(votes), np.asarray(probabilities, dtype=float)
++    if (votes.ndim != 2 or votes.shape[1] != 5 or len(votes) == 0 or probabilities.shape != (len(votes),)
++            or not np.isfinite(votes).all() or (votes < 0).any() or (votes != np.floor(votes)).any()
++            or (votes.sum(1) == 0).any() or not np.isfinite(probabilities).all()
++            or ((probabilities < 0) | (probabilities > 1)).any()):
++        raise ValueError('Expected integer five-grade votes and one binary probability per image')
++    acceptable, unacceptable = votes[:, :2].sum(1), votes[:, 2:].sum(1)
++    reference, tied = unacceptable > acceptable, unacceptable == acceptable
++    predicted = probabilities >= threshold
++    scores = _scores(reference, predicted)
++    scores.update({'method': 'dedicated_binary_head', 'decision_threshold': threshold,
++                   'positive_class': 'unacceptable', 'acceptable_grades': [1, 2], 'unacceptable_grades': [3, 4, 5],
++                   'reference_tie_count': int(tied.sum()), 'reference_tie_percentage': float(tied.mean()*100),
++                   'reference_convention': 'Majority of available individual binary votes; tied references assumed acceptable',
++                   'prediction_rule': 'mean of patch sigmoid binary probabilities >= threshold; exact ties unacceptable',
++                   'aggregation': 'equal weight per image; missing ratings ignored',
++                   'unique_majority': _scores(reference[~tied], predicted[~tied])})
++    details = pd.DataFrame({'binary_head_p_unacceptable': probabilities,
++                           'binary_head_prediction': np.where(predicted, 'unacceptable', 'acceptable'),
++                           'binary_head_confusion_outcome': np.where(reference, np.where(predicted, 'TP', 'FN'),
++                                                                    np.where(predicted, 'FP', 'TN'))})
++    return scores, details
++
++
++
++
++
++
++
++"""Image-level agreement with observed grader distributions, without class weights."""
++import numpy as np
++import pandas as pd
++
++
++PROBABILITY_COLUMNS = [f'probability_grade_{grade}' for grade in range(1, 6)]
++TARGET_COLUMNS = [f'target_grade_{grade}' for grade in range(1, 6)]
++
++
++def calculate_distribution_metrics(targets, probabilities):
++    targets, probabilities = np.asarray(targets, dtype=float), np.asarray(probabilities, dtype=float)
++    if targets.ndim != 2 or targets.shape[1] != 5 or targets.shape[0] == 0 or targets.shape != probabilities.shape:
++        raise ValueError('Expected matching, nonempty [images, 5] distributions')
++    for name, values in [('targets', targets), ('probabilities', probabilities)]:
++        if not np.isfinite(values).all() or (values < 0).any() or (values > 1).any():
++            raise ValueError(f'{name} must contain finite probabilities between zero and one')
++        if not np.allclose(values.sum(1), 1, rtol=0, atol=1e-5):
++            raise ValueError(f'{name} rows must sum to one')
++    # Remove floating-point summation drift, not substantive probability errors.
++    targets = targets / targets.sum(1, keepdims=True)
++    probabilities = probabilities / probabilities.sum(1, keepdims=True)
++    floor = float(np.finfo(np.float32).tiny)
++    cross_entropy = -(targets * np.log(np.maximum(probabilities, floor))).sum(1)
++    emd = np.abs(np.cumsum(targets, axis=1)[:, :-1] - np.cumsum(probabilities, axis=1)[:, :-1]).sum(1)
++    per_image = pd.DataFrame({'earth_movers_distance': emd, 'soft_cross_entropy': cross_entropy})
++    metrics = {
++        'image_count': len(targets),
++        'earth_movers_distance': float(emd.mean()),
++        'soft_cross_entropy': float(cross_entropy.mean()),
++        'reference': 'fractions of available grader ratings per image',
++        'class_weights_applied': False,
++        'aggregation': 'equal-weight mean over images; no rating-count weighting',
++        'earth_movers_distance_definition': 'Wasserstein-1: sum of absolute cumulative-probability differences at boundaries 1-4',
++        'earth_movers_distance_units': 'grade steps, range 0 to 4; lower is better',
++        'soft_cross_entropy_definition': '-sum(target * ln(predicted_probability)); lower is better; minimum depends on reference uncertainty',
++        'probability_floor': floor,
++        'rounding_policy': 'rows within 1e-5 of unit sum are renormalised for floating-point drift',
++        'grade_order': [1, 2, 3, 4, 5],
++    }
++    return metrics, per_image
++
++def calculate_validation_metrics(reference, predicted):
++    """Zero undefined P/R/F1 explicitly; undefined kappa becomes JSON null."""
++    reference, predicted = np.asarray(reference), np.asarray(predicted)
++    if reference.size == 0 or reference.shape != predicted.shape:
++        raise ValueError('Expected matching, nonempty grade arrays')
++    if not np.isin(reference, range(1, 6)).all() or not np.isin(predicted, range(1, 6)).all():
++        raise ValueError('Grades must be 1 through 5')
++    cm = np.zeros((5, 5), dtype=np.int64)
++    np.add.at(cm, (reference.astype(int) - 1, predicted.astype(int) - 1), 1)
++    support, predicted_count, tp = cm.sum(axis=1), cm.sum(axis=0), cm.diagonal()
++    precision = np.divide(tp, predicted_count, out=np.zeros(5), where=predicted_count != 0)
++    recall = np.divide(tp, support, out=np.zeros(5), where=support != 0)
++    denominator = support + predicted_count
++    f1 = np.divide(2 * tp, denominator, out=np.zeros(5), where=denominator != 0)
++    weights = (np.arange(5)[:, None] - np.arange(5)[None, :]) ** 2 / 16
++    expected = np.outer(support, predicted_count) / reference.size
++    expected_disagreement = float((weights * expected).sum())
++    kappa = 1 - float((weights * cm).sum()) / expected_disagreement if expected_disagreement > 0 else None
++    error = np.abs(reference - predicted)
++    metrics = {
++        'image_count': int(reference.size),
++        'exact_accuracy': float((error == 0).mean()),
++        'within_one_grade_accuracy': float((error <= 1).mean()),
++        'mean_absolute_grade_error': float(error.mean()),
++        'quadratic_weighted_kappa': kappa,
++        'macro_f1': float(f1.mean()),
++        'weighted_f1': float(np.dot(f1, support) / support.sum()),
++        'undefined_metric_policy': 'Undefined precision/recall/F1 are 0 with per-grade defined flags; macro F1 includes all five grades. Undefined kappa is null.',
++        'quadratic_weighted_kappa_undefined_reason': 'Zero expected disagreement' if kappa is None else None,
++    }
++    per_grade = pd.DataFrame({
++        'grade': range(1, 6), 'precision': precision, 'recall': recall,
++        'f1': f1, 'support': support,
++        'precision_defined': predicted_count != 0, 'recall_defined': support != 0,
++        'f1_defined': denominator != 0,
++    })
++    return metrics, per_grade, pd.DataFrame(cm, index=range(1, 6), columns=range(1, 6))
++
++
++def calculate_combined_metrics(reference, probabilities, grader_columns, binary_threshold=0.5, binary_head_probabilities=None):
++    rated = generate_targets(reference.reset_index(drop=True), 'soft_categorical', grader_columns)
++    if not rated.eligible.all():
++        raise ValueError('Combined metrics require at least one selected rating per image')
++    targets = reference[TARGET_COLUMNS].to_numpy() if set(TARGET_COLUMNS).issubset(reference.columns) else rated[TARGET_COLUMNS].to_numpy()
++    metrics, details = calculate_distribution_metrics(targets, probabilities)
++    if not np.allclose(targets, rated[TARGET_COLUMNS].to_numpy(), rtol=0, atol=1e-8):
++        raise ValueError('Soft targets disagree with selected original ratings')
++    ratings = rated[grader_columns].apply(pd.to_numeric, errors='coerce').to_numpy(dtype=float)
++    votes = np.stack([(ratings == grade).sum(axis=1) for grade in range(1, 6)], axis=1)
++    winners = votes == votes.max(axis=1, keepdims=True)
++    reference_grade = votes.argmax(axis=1) + 1
++    predicted = np.asarray(probabilities).argmax(axis=1) + 1
++    tied = winners.sum(axis=1) > 1
++    matches_any = votes[np.arange(len(votes)), predicted - 1] > 0
++    errors = np.abs(reference_grade - predicted)
++    consensus, _, _ = calculate_validation_metrics(reference_grade, predicted)
++    metrics.update({
++        'matches_any_grader_accuracy': float(matches_any.mean()),
++        'consensus_reference_exact_accuracy': consensus['exact_accuracy'],
++        'consensus_reference_mae': consensus['mean_absolute_grade_error'],
++        'consensus_reference_quadratic_weighted_kappa': consensus['quadratic_weighted_kappa'],
++        'consensus_reference_quadratic_weighted_kappa_undefined_reason': consensus['quadratic_weighted_kappa_undefined_reason'],
++        'reference_tie_count': int(tied.sum()),
++        'reference_tie_percentage': float(tied.mean() * 100),
++        'single_grade_reference_convention': 'Reference grades are the most frequent available grader rating; ties are resolved in favour of the lower grade.',
++    })
++    details['predicted_grade'] = predicted
++    details['consensus_reference_grade'] = reference_grade
++    details['reference_tied'] = tied
++    details['rating_count'] = rated.rating_count.to_numpy()
++    details['matches_any_grader'] = matches_any
++    details['consensus_exact_match'] = errors == 0
++    details['absolute_grade_error'] = errors
++    binary, grade_argmax, agreement, binary_details = calculate_binary_methods(votes, probabilities, binary_threshold)
++    metrics['binary'] = binary
++    metrics['binary_grade_argmax'] = grade_argmax
++    metrics['binary_method_comparison'] = agreement
++    for column in binary_details:
++        details[column] = binary_details[column].to_numpy()
++    if binary_head_probabilities is not None:
++        dedicated, dedicated_details = calculate_binary_head_metrics(votes, binary_head_probabilities, binary_threshold)
++        metrics['binary_dedicated_head'] = dedicated
++        for column in dedicated_details:
++            details[column] = dedicated_details[column].to_numpy()
++    return metrics, details
++
++
++
+diff --git a/auto_qc/CNN/model.py b/auto_qc/CNN/model.py
+--- a/auto_qc/CNN/model.py
++++ b/auto_qc/CNN/model.py
+@@ -41,7 +41,7 @@
+ 
+         self.dropout_p = dropout_p
+ 
+-    def forward(self, x):
++    def forward_features(self, x):
+         x = x.view(-1, x.size(-3), x.size(-2), x.size(-1))
+ 
+         # convolve
+@@ -69,9 +69,88 @@
+         if self.dropout_p > 0:
+             h = self.dropout(h)
+ 
++        return h
++
++    def forward(self, x):
++        h = self.forward_features(x)
+         # classify
+         d = self.fc3_d(h)
+         if self.output_sigmoid:
+             d = self.sigmoid(d)
+ 
+         return d
++
++
++class OrderedCoralHead(nn.Module):
++    def __init__(self, features):
++        super().__init__()
++        self.score = nn.Linear(features, 1, bias=False)
++        self.first_bias = nn.Parameter(torch.tensor(1.0))
++        self.raw_gaps = nn.Parameter(torch.full((3,), float(torch.log(torch.expm1(torch.tensor(.25))))))
++
++    def forward(self, features):
++        biases = torch.cat((self.first_bias.reshape(1), self.first_bias - F.softplus(self.raw_gaps).cumsum(0)))
++        return self.score(features) + biases
++
++
++class OrdinalIQAnet(IQAnet):
++    def __init__(self, head='or_soft', **kwargs):
++        super().__init__(num_classes=5, **kwargs)
++        if head not in ('or_soft', 'coral', 'or_soft_binary'):
++            raise ValueError(f'Unknown ordinal head: {head}')
++        self.fc3_d = OrderedCoralHead(self.fc2.out_features) if head == 'coral' else nn.Linear(self.fc2.out_features, 4)
++        self.head = head
++        if head == 'or_soft_binary':
++            # Preserve shared initialisation and subsequent dropout RNG of the control.
++            with torch.random.fork_rng(devices=[]):
++                self.binary_head = nn.Linear(self.fc2.out_features, 1)
++
++    def forward(self, x):
++        features = self.forward_features(x)
++        ordinal = self.fc3_d(features)
++        return (ordinal, self.binary_head(features).squeeze(1)) if self.head == 'or_soft_binary' else ordinal
++
++
++class FrozenBinaryIQAnet(nn.Module):
++    def __init__(self, source, seed):
++        super().__init__()
++        self.source = source.requires_grad_(False).eval()
++        with torch.random.fork_rng(devices=[]):
++            torch.manual_seed(seed)
++            self.binary_head = nn.Linear(source.fc2.out_features, 1)
++        self.train(False)
++
++    def train(self, mode=True):
++        super().train(mode)
++        self.source.eval()
++        return self
++
++    def forward(self, x):
++        with torch.no_grad():
++            features = self.source.forward_features(x)
++            ordinal = self.source.fc3_d(features)
++        return ordinal, self.binary_head(features).squeeze(1)
++
++
++def make_model(settings, seed=42, load_source=True):
++    settings = dict(settings)
++    head = settings.pop('head')
++    if settings.pop('num_grades', 5) != 5:
++        raise ValueError('These methods require exactly five grades')
++    source = settings.pop('source', None)
++    if settings.get('output_sigmoid', False):
++        raise ValueError('All supported objectives require raw logits')
++    if head == 'five_logits':
++        return IQAnet(num_classes=5, **settings)
++    if head == 'frozen_binary':
++        if not source or source['architecture']['head'] != 'or_soft':
++            raise ValueError('Frozen binary requires an explicit single-head OR-Soft source')
++        model = make_model(source['architecture'], seed)
++        if load_source:
++            from .utils import sha256
++            if sha256(source['checkpoint']) != source['sha256']:
++                raise ValueError('Frozen source checkpoint hash mismatch')
++            state = torch.load(source['checkpoint'], map_location='cpu', weights_only=True)
++            model.load_state_dict(state.get('model_state', state), strict=True)
++        return FrozenBinaryIQAnet(model, seed)
++    return OrdinalIQAnet(head=head, **settings)
+diff --git a/auto_qc/CNN/rerun.py b/auto_qc/CNN/rerun.py
+new file mode 100644
+--- /dev/null
++++ b/auto_qc/CNN/rerun.py
+@@ -0,0 +1,354 @@
++"""Prepare verified historical configurations, check them, and run a fail-fast queue."""
++import argparse
++import copy
++import csv
++from datetime import datetime, timezone
++import hashlib
++import json
++import os
++from pathlib import Path
++import traceback
++
++import numpy as np
++import pandas as pd
++
++from .dataset import canonical_graders, load_workbook
++from .generate_datasets import build_datasets
++from .training import preflight, train
++from .utils import ROOT, read_config, sha256, write_json
++
++GRADERS = ['ganaav_grade', 'shane_grade', 'reviewer1_grade', 'reviewer2_grade', 'reviewer3_grade']
++
++
++def relative(path):
++    path = Path(path).resolve()
++    return str(path.relative_to(ROOT)).replace('\\', '/') if path.is_relative_to(ROOT) else str(path)
++
++
++def prepare(inventory):
++    if (ROOT / 'experiments/rerun_queue.json').exists():
++        raise FileExistsError('Rerun queue already exists; use check/run rather than overwriting it')
++    rows = list(csv.DictReader(Path(inventory).open(encoding='utf-8')))
++    completed = [r for r in rows if r['completion_status'] == 'completed_artifacts_present']
++    profiles, snapshots = [], {}
++    for path in sorted((ROOT / 'runs').glob('*/ratings_input.xlsx')):
++        snapshots.setdefault(sha256(path), path)
++    configurations = {}
++    for row in completed:
++        path = Path(row.get('config_path', ''))
++        if path.is_file():
++            configurations[row['experiment_id']] = read_config(path)
++    hashes = sorted({c.get('ratings_sha256', c.get('input_ratings_sha256')) for c in configurations.values()} - {None})
++    for digest in hashes:
++        if digest not in snapshots:
++            continue
++        snapshot = pd.read_excel(snapshots[digest], sheet_name='Grades')
++        raw = pd.read_csv(ROOT / 'data/shane-image-file-listing.csv')
++        raw['image_id'] = raw.image_filename.map(lambda p: Path(str(p).replace('\\', '/')).stem)
++        aligned = snapshot.set_index('image_id').loc[raw.image_id]
++        changes = int((aligned.shane_grade.to_numpy() != raw.image_grading.to_numpy()).sum())
++        profiles.append({'name': 'ratings_'+digest[:12], 'ratings': {'path': relative(snapshots[digest]), 'sha256': digest, 'sheet': 'Grades'},
++                         'graders': GRADERS, 'expected_shane_changes': changes})
++    split = ROOT / 'prepared_visus_nhp/manifest.csv'
++    ganaav = ROOT / 'data/baseline_annotation_20261023/multi_class_qc_dataset.csv'
++    shane = ROOT / 'data/shane-image-file-listing.csv'
++    exclusions = read_config(ROOT / 'prepared_visus_nhp/split_report.json')['shane_only_ids']
++    build = {'schema': 'autoqc_dataset_build_v1', 'ganaav': {'path': relative(ganaav), 'sha256': sha256(ganaav)},
++             'shane': {'path': relative(shane), 'sha256': sha256(shane)},
++             'shane_authority': 'This is the raw version used by the recorded historical snapshots; earliest/original authority among differing copies remains unresolved',
++             'split': {'path': relative(split), 'sha256': sha256(split)}, 'allowed_unmatched_ids': exclusions,
++             'output_dir': 'model_dir/historical_datasets', 'profiles': profiles,
++             'original_archive_sha256': '6ccfb237b8358e28caaa9a0cf152b9aa52dc3352371fbcda5d73fc6c185a6c34',
++             'original_commit': 'unknown', 'ganaav_identity_confirmation': 'project owner, 2026-10-30'}
++    (ROOT / 'configs').mkdir(exist_ok=True)
++    write_json(ROOT / 'configs/historical_datasets.yaml', build)
++    build_datasets(ROOT / 'configs/historical_datasets.yaml')
++    queue, seen = [], {}
++    for number, row in enumerate(completed, 1):
++        historical = row['experiment_id']
++        c = configurations.get(historical, {})
++        entry = {'historical_experiment': historical, 'status': 'blocked', 'reasons': []}
++        if not c:
++            entry['reasons'] = ['No saved effective optimiser/loss/weighting configuration; folder names are not evidence']
++            queue.append(entry)
++            continue
++        required = ['seed', 'batch_size', 'epochs', 'learning_rate', 'optimizer', 'optimizer_settings', 'reduce_lr',
++                    'patience', 'batch_normalization', 'grader_columns', 'preprocessing', 'class_weights']
++        entry['reasons'] = ['Unknown saved setting: '+key for key in required if key not in c]
++        if c.get('reduce_lr') and 'scheduler_settings' not in c:
++            entry['reasons'].append('Unknown saved scheduler settings')
++        ratings_hash = c.get('ratings_sha256', c.get('input_ratings_sha256'))
++        profile = next((p for p in profiles if p['ratings']['sha256'] == ratings_hash), None)
++        if profile is None:
++            entry['reasons'].append('Hash-matched ratings snapshot unavailable')
++        if entry['reasons']:
++            queue.append(entry)
++            continue
++        method = c.get('loss_selection', 'cross_entropy' if c.get('loss') == 'CrossEntropyLoss' else None)
++        mapping = {'cross_entropy': ('five_logits', 'soft_ce', 'multigrader_soft_labels.xlsx'),
++                   'continuous_cdw_ce': ('five_logits', 'continuous_cdw_ce', 'multigrader_mean_labels.xlsx'),
++                   'soft_ordinal_coral': ('coral', 'ordinal_bce', 'ordinal_targets.xlsx'),
++                   'or_soft': ('or_soft', 'ordinal_bce', 'ordinal_targets.xlsx'),
++                   'or_soft_binary': ('or_soft_binary', 'joint_bce', 'ordinal_targets.xlsx'),
++                   'or_soft_frozen_binary': ('frozen_binary', 'binary_bce', 'ordinal_targets.xlsx')}
++        if method not in mapping:
++            entry['reasons'] = ['Training interpretation unresolved: '+str(method)]
++            queue.append(entry)
++            continue
++        head, loss_name, filename = mapping[method]
++        dataset = ROOT / build['output_dir'] / profile['name'] / filename
++        frame, meta = load_workbook(dataset)
++        graders = canonical_graders(c['grader_columns'])
++        if graders != meta['graders']:
++            entry['reasons'] = ['Reviewer selection differs; a separate generated profile is required']
++            queue.append(entry)
++            continue
++        historical_run = ROOT / 'runs' / historical
++        cohort = pd.read_csv(historical_run / 'manifest.csv')
++        if 'targets.csv' in {p.name for p in historical_run.iterdir()}:
++            saved_targets = pd.read_csv(historical_run / 'targets.csv')
++            saved_targets = saved_targets.set_index('image_id')
++            candidate = frame.set_index('image_id').loc[saved_targets.index]
++            columns = [f'target_above_grade_{k}' for k in range(1, 5)] if head != 'five_logits' else [f'target_grade_{k}' for k in range(1, 6)]
++            if loss_name == 'continuous_cdw_ce':
++                comparisons = [(candidate.target_mean_grade, saved_targets.continuous_target)]
++            else:
++                comparisons = [(candidate[name], saved_targets[name]) for name in columns]
++            if not all(np.allclose(left, right, rtol=0, atol=1e-8, equal_nan=True) for left, right in comparisons):
++                entry['reasons'] = ['Generated targets disagree with historical saved targets']
++                queue.append(entry)
++                continue
++        identity = frame.set_index('image_id').loc[cohort.image_id]
++        for field in ('patient_id', 'project', 'split'):
++            if not identity[field].reset_index(drop=True).equals(cohort[field].reset_index(drop=True)):
++                raise ValueError(f'Historical assignment conflict: {historical}, {field}')
++        model = {'head': head, 'batch_normalization': c['batch_normalization'], 'output_sigmoid': False, 'dropout_p': .5,
++                 'ker_size': 5, 'n_kers': 64, 'n1_nodes': 600, 'n2_nodes': 400, 'num_grades': 5}
++        if head == 'frozen_binary':
++            source = Path(c['source_checkpoint_path'])
++            if not source.is_file() or sha256(source) != c['source_checkpoint_sha256']:
++                entry['reasons'] = ['Frozen source missing or checkpoint hash changed']
++                queue.append(entry)
++                continue
++            model['source'] = {'checkpoint': str(source), 'sha256': sha256(source), 'architecture': dict(model, head='or_soft')}
++        options = {key: value for key, value in c['optimizer_settings'].items() if key in
++                   ('lr', 'betas', 'eps', 'weight_decay', 'amsgrad', 'maximize', 'foreach', 'capturable', 'differentiable', 'fused', 'momentum', 'dampening', 'nesterov')}
++        scheduler = {key: value for key, value in c.get('scheduler_settings', {}).items() if key != 'name'}
++        weights = c.get('effective_class_weights_float32', c['class_weights'])
++        weight_spec = {'mode': 'none'} if weights is None else {'mode': 'explicit', 'values': weights, 'grade_order': [1, 2, 3, 4, 5], 'source': c.get('class_weight_source')}
++        subsets = {}
++        for name in ('shared_validation', 'baseline_validation', 'reference_shared_validation'):
++            subset_file = historical_run / (name+'_targets.csv')
++            if subset_file.is_file():
++                subsets[name] = pd.read_csv(subset_file).image_id.tolist()
++        if loss_name == 'continuous_cdw_ce' and (c.get('alpha') is None or c['alpha'] <= 0):
++            entry['reasons'] = ['Recorded CDW alpha unavailable']
++            queue.append(entry)
++            continue
++        identifier = f'rerun_{number:03}_{method}_seed{c["seed"]}'
++        config = {'schema': 'autoqc_cnn_config_v1', 'experiment_id': identifier, 'status': 'ready',
++                  'historical': {'run': relative(historical_run), 'config_sha256': sha256(historical_run / 'run_config.json'),
++                                 'manifest_sha256': sha256(historical_run / 'manifest.csv'),
++                                 'classification': 'corrected implementation rerun; same saved patient assignments and historical target records',
++                                 'corrections': ['cloned best checkpoint', 'explicit class order', 'seeded RNGs', 'split before patches', 'architecture-aware reload', 'unique outputs'],
++                                 'source_version': c.get('code_version', 'unknown')},
++                  'dataset': {'path': relative(dataset), 'sha256': sha256(dataset), 'target_kind': meta['target_kind'], 'graders': graders,
++                              'target_definition': meta['label_rule'], 'profile': profile['name']},
++                  'model': model, 'loss': {'name': loss_name, 'alpha': c.get('alpha'), 'binary_loss_weight': c.get('binary_loss_weight', 1.),
++                                          'class_weights': weight_spec, 'threshold_weights': [1, 1, 1, 1] if head != 'five_logits' else None,
++                                          'reduction': c.get('loss_reduction', 'example mean; threshold sum for ordinal'),
++                                          'epoch_aggregation': 'batch_size_weighted_batch_means' if loss_name == 'hard_ce' else 'example_mean'},
++                  'training': {'seed': c['seed'], 'learning_rate': c['learning_rate'], 'batch_size': c['batch_size'], 'batch_size_unit': 'patches', 'epochs': c['epochs'],
++                               'patience': c['patience'], 'optimizer': c['optimizer'], 'optimizer_settings': options,
++                               'scheduler': {'enabled': c['reduce_lr'], 'settings': scheduler}, 'device': 'auto'},
++                  'preprocessing': dict(c['preprocessing'], horizontal_flip=True),
++                  'cohort': {'training_image_ids': cohort.loc[cohort.split.eq('train'), 'image_id'].tolist(),
++                             'monitor_image_ids': cohort.loc[cohort.split.eq('validation'), 'image_id'].tolist(),
++                             'baseline_definition': c.get('baseline_metadata'), 'matched_sampling': c.get('matched_baseline_metadata')},
++                  'selection': {'criterion': 'strict minimum binary patch validation BCE' if head == 'frozen_binary' else 'strict minimum primary patch validation loss',
++                                'monitor': 'binary' if head == 'frozen_binary' else 'ordinal' if head != 'five_logits' else 'configured primary loss',
++                                'early_stopping': 'patience epochs without strict improvement'},
++                  'evaluation': {'enable_test': False, 'held_out_project': 'VISUS-NHP', 'image_ids': frame.loc[frame.split.eq('validation'), 'image_id'].tolist(),
++                                 'subsets': subsets, 'unit': 'whole_image', 'aggregation': 'mean of patch grade probabilities; mean of patch sigmoid for binary',
++                                 'grade_decision': 'argmax, lower grade for ties', 'binary_decision': 'grade argmax primary; sum>=.5 and dedicated>=.5 separate',
++                                 'reference': 'available-grader mode; lower grade for ties; binary majority with ties acceptable',
++                                 'projection': 'inference_only_unweighted_least_squares_descending_pava_v1' if head in ('or_soft', 'or_soft_binary', 'frozen_binary') else 'none'}}
++        scientific = {k: v for k, v in config.items() if k not in ('experiment_id', 'historical')}
++        signature = hashlib.sha256(json.dumps(scientific, sort_keys=True).encode()).hexdigest()
++        entry.update(config=f'configs/reruns/{identifier}.yaml', experiment_id=identifier, signature=signature)
++        if signature in seen:
++            entry.update(status='duplicate_excluded', duplicate_of=seen[signature])
++        else:
++            entry['status'] = 'ready'
++            seen[signature] = historical
++        config['status'] = 'ready' if entry['status'] == 'ready' else 'duplicate_excluded'
++        config['duplicate_of'] = entry.get('duplicate_of')
++        target = ROOT / entry['config']
++        target.parent.mkdir(exist_ok=True)
++        write_json(target, config)
++        queue.append(entry)
++    materialize_blocked_configs(queue, configurations)
++    for entry in queue:
++        entry['config_sha256'] = sha256(ROOT / entry['config'])
++    write_json(ROOT / 'experiments/rerun_queue.json', {'schema': 1, 'inventory_sha256': sha256(inventory),
++               'completed_training_records': len(completed), 'entries': queue})
++    template = read_config(ROOT / next(e['config'] for e in queue if e['status'] == 'ready'))
++    current = read_config(ROOT / 'configs/datasets.yaml')
++    prepare_diagnostic_configs(template, current['profiles'][0], current['output_dir'])
++    print(json.dumps({state: sum(e['status'] == state for e in queue) for state in ('ready', 'blocked', 'duplicate_excluded')}))
++    return queue
++
++
++def materialize_blocked_configs(entries, saved):
++    for number, entry in enumerate(entries, 1):
++        if entry['status'] != 'blocked':
++            continue
++        name = entry['historical_experiment'].split('_')[0].replace('previousStudent', 'ganaav')
++        identifier = f'blocked_{number:03}_{name}'
++        entry['config'] = f'configs/reruns/{identifier}.yaml'
++        write_json(ROOT / entry['config'], {'schema': 'autoqc_cnn_config_v1', 'experiment_id': identifier,
++                   'status': 'blocked', 'blocked_reasons': entry['reasons'],
++                   'historical_run': 'runs/'+entry['historical_experiment'],
++                   'known_saved_settings': saved.get(entry['historical_experiment'], 'See preserved model_params.csv; remaining settings unknown'),
++                   'unknown_setting_policy': 'do not fill from folder names or current defaults'})
++
++
++def prepare_diagnostic_configs(template, profile, output_dir='datasets'):
++    """Explicit smoke settings, never inferred settings for undocumented old runs."""
++    from .utils import class_weights
++    checks = [
++        ('hard_ganaav', 'ganaav_labels.xlsx', 'hard_ce', False),
++        ('hard_ganaav_weighted', 'ganaav_labels.xlsx', 'hard_ce', True),
++        ('hard_shane', 'shane_labels.xlsx', 'hard_ce', False),
++        ('ceiling_mean', 'ganaav_shane_ceiling_labels.xlsx', 'hard_ce', False),
++        ('exact_pair_mean', 'ganaav_shane_mean_labels.xlsx', 'continuous_cdw_ce', False),
++        ('exact_multigrader_mean', 'multigrader_mean_labels.xlsx', 'continuous_cdw_ce', False),
++        ('soft_categorical', 'multigrader_soft_labels.xlsx', 'soft_ce', False),
++        ('soft_categorical_weighted', 'multigrader_soft_labels.xlsx', 'soft_ce', True),
++    ]
++    for name, filename, loss, weighted in checks:
++        config = copy.deepcopy(template)
++        dataset = ROOT / output_dir / profile['name'] / filename
++        frame, meta = load_workbook(dataset)
++        config.update(experiment_id='check_'+name, diagnostic_only=True,
++                      historical={'classification': 'diagnostic only; settings borrowed explicitly from a ready template, not a recovered historical experiment'})
++        config['model'] = {'head': 'five_logits', 'batch_normalization': False, 'output_sigmoid': False, 'dropout_p': .5,
++                           'ker_size': 5, 'n_kers': 64, 'n1_nodes': 600, 'n2_nodes': 400, 'num_grades': 5}
++        config['dataset'] = {'path': relative(dataset), 'sha256': sha256(dataset), 'target_kind': meta['target_kind'],
++                             'graders': meta['graders'], 'target_definition': meta['label_rule'], 'profile': profile['name']}
++        config['loss'] = {'name': loss, 'alpha': 1. if loss == 'continuous_cdw_ce' else None,
++                          'class_weights': {'mode': 'none'}, 'threshold_weights': None,
++                          'reduction': 'mean examples; hard CE weighted batches divide by target-weight sum',
++                          'epoch_aggregation': 'global_target_weight_sum' if loss == 'hard_ce' else 'example_mean'}
++        if weighted:
++            reference = frame.loc[frame.split.eq('train')].copy()
++            if 'target_class_index' not in reference:
++                reference['target_class_index'] = reference.shane_grade-1
++            values = class_weights(reference, {'mode': 'inverse_frequency'}).tolist()
++            config['loss']['class_weights'] = {'mode': 'explicit', 'values': values, 'source': 'training-image inverse frequency; Shane reference for soft CE'}
++        config['training']['seed'] = 42
++        config['cohort'] = {'training_image_ids': frame.loc[frame.split.eq('train'), 'image_id'].tolist(),
++                            'monitor_image_ids': frame.loc[frame.split.eq('validation'), 'image_id'].tolist()}
++        config['evaluation']['image_ids'] = frame.loc[frame.split.eq('validation'), 'image_id'].tolist()
++        config['evaluation']['subsets'] = {}
++        config['evaluation']['projection'] = 'none'
++        config['selection'] = {'criterion': 'strict minimum configured primary patch validation loss', 'monitor': 'configured primary loss'}
++        destination = ROOT / f'configs/checks/{name}.yaml'
++        destination.parent.mkdir(exist_ok=True)
++        write_json(destination, config)
++
++
++def run_queue(mode, queue_path, resume=None):
++    queue = read_config(queue_path)
++    entries = [e for e in queue['entries'] if e['status'] == 'ready']
++    for entry in entries:
++        if entry.get('config_sha256') and sha256(ROOT / entry['config']) != entry['config_sha256']:
++            raise ValueError(f'Queued configuration changed: {entry["config"]}; run edited configurations individually')
++    if mode == 'check':
++        for entry in entries:
++            train(ROOT / entry['config'], check_only=True)
++        print(f'{len(entries)} configurations passed')
++        return
++    if mode == 'run' and resume is None:
++        for path in (ROOT / 'model_dir').glob('queue_run_*/queue_status.json'):
++            previous = read_config(path)
++            if previous['status'] == 'running':
++                raise RuntimeError(f'A rerun queue is already marked running: {path.parent}; check its owner_pid before resuming an interrupted queue')
++    if mode == 'smoke':
++        # Distinct loss/head paths plus both historical CE weighting variants.
++        selected, seen = [], set()
++        for entry in entries:
++            config = read_config(ROOT / entry['config'])
++            key = (config['model']['head'], config['loss']['name'], config['loss']['class_weights']['mode'])
++            if key not in seen:
++                selected.append(entry)
++                seen.add(key)
++        entries = selected
++        # Hard-label and ceiling paths are new controlled comparisons, not recovered historical settings.
++        entries += [{'config': str(p.relative_to(ROOT))} for p in sorted((ROOT / 'configs/checks').glob('*.yaml'))]
++    directory = Path(resume).resolve() if resume else ROOT / 'model_dir' / ('queue_'+mode+'_'+datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f'))
++    if resume:
++        state = read_config(directory / 'queue_status.json')
++        accepted = [sha256(queue_path), *queue.get('compatible_previous_queue_sha256', [])]
++        if state['queue_sha256'] not in accepted or state['mode'] != mode:
++            raise ValueError('Cannot resume a different queue/mode')
++        if state['queue_sha256'] != sha256(queue_path):
++            for item in queue.get('dataset_path_relocations', []):
++                before = read_config(item['original_config'])
++                after = read_config(ROOT / item['config'])
++                if sha256(item['archived_path']) != item['sha256']:
++                    raise ValueError('Archived dataset hash changed')
++                before['dataset']['path'] = after['dataset']['path']
++                if before != after:
++                    raise ValueError('Queue compatibility permits dataset-path relocation only')
++            state['queue_sha256'] = sha256(queue_path)
++        for completed in state['completed']:
++            status = read_config(Path(completed['run']) / 'run_status.json')
++            if status['status'] != 'completed' or not status['required_outputs_verified']:
++                raise ValueError('A previously completed queue entry no longer verifies')
++    else:
++        directory.mkdir(parents=True, exist_ok=False)
++        state = {'status': 'running', 'mode': mode, 'owner_pid': os.getpid(), 'queue_sha256': sha256(queue_path), 'completed': [], 'remaining': [e['config'] for e in entries]}
++    write_json(directory / 'queue_status.json', state)
++    try:
++        for entry in entries:
++            if entry['config'] not in state['remaining']:
++                continue
++            state.update(status='running', active=entry['config'])
++            write_json(directory / 'queue_status.json', state)
++            result = train(ROOT / entry['config'], output_root=directory.relative_to(ROOT), smoke=mode == 'smoke')
++            status = read_config(result / 'run_status.json')
++            if status['status'] != 'completed' or not status['required_outputs_verified']:
++                raise RuntimeError('Required outputs not verified; stopping queue')
++            state['completed'].append({'config': entry['config'], 'run': str(result)})
++            state['remaining'].remove(entry['config'])
++            write_json(directory / 'queue_status.json', state)
++        state.update(status='completed', active=None)
++    except BaseException as error:
++        state.update(status='failed', error=str(error), traceback=traceback.format_exc())
++        raise
++    finally:
++        write_json(directory / 'queue_status.json', state)
++    print(f'Queue {state["status"]}: {directory}')
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('action', choices=['prepare', 'check', 'smoke', 'run', 'status'])
++    parser.add_argument('--inventory', type=Path, default=Path('experiments/historical_inventory.csv'))
++    parser.add_argument('--queue', type=Path, default=Path('experiments/rerun_queue.json'))
++    parser.add_argument('--resume', type=Path)
++    args = parser.parse_args()
++    if args.action == 'prepare':
++        prepare(args.inventory)
++    elif args.action == 'status':
++        paths = sorted((ROOT / 'model_dir').glob('queue_*/queue_status.json'))
++        for path in paths:
++            state = read_config(path)
++            print(path, state['status'], 'completed', len(state['completed']), 'remaining', len(state['remaining']), 'active', state.get('active'))
++    else:
++        run_queue(args.action, args.queue, args.resume)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/auto_qc/CNN/testing.py b/auto_qc/CNN/testing.py
+--- a/auto_qc/CNN/testing.py
++++ b/auto_qc/CNN/testing.py
+@@ -1,284 +1,141 @@
++"""Load saved architectures; evaluate patches and whole images separately."""
++import argparse
++from pathlib import Path
+ 
+-import argparse
+ import numpy as np
+-import os
+ import pandas as pd
+ import torch
+-import torch.nn as nn
+-from torchvision import transforms
+-from torch.utils.data import DataLoader
+-from sklearn.metrics import (
+-    confusion_matrix,
+-    precision_score,
+-    recall_score,
+-    f1_score,
+-    roc_auc_score,
+-    average_precision_score
+-)
+-from sklearn.model_selection import train_test_split
+-from sklearn.preprocessing import label_binarize
++
++from .dataset import VOTES, extract_patches, load_workbook
++from .losses import grade_probabilities, ordering_diagnostics
++from .metrics import calculate_combined_metrics, calculate_validation_metrics
++from .utils import load_checkpoint, write_json
+ 
+ 
+-from model import IQAnet
+-from dataset import ImageQualityDataset, subsample_subimages
+-from utils import get_class_counts
++def confusion_figure(matrix, path):
++    from PIL import Image, ImageDraw
++    n = len(matrix)
++    image = Image.new('RGB', (100+n*70, 100+n*70), 'white')
++    draw = ImageDraw.Draw(image)
++    values = np.asarray(matrix)
++    maximum = max(1, int(values.max()))
++    for r in range(n):
++        draw.text((20, 75+r*70), str(r+1), fill='black')
++        draw.text((75+r*70, 30), str(r+1), fill='black')
++        for c in range(n):
++            shade = 255-int(170*values[r, c]/maximum)
++            draw.rectangle((60+c*70, 60+r*70, 129+c*70, 129+r*70), fill=(shade, shade, 255), outline='white')
++            draw.text((85+c*70, 85+r*70), str(values[r, c]), fill='black')
++    draw.text((20, 10), 'Rows: reference; columns: predicted', fill='black')
++    image.save(path)
+ 
+ 
+-def calculate_cm_metrics(tn, fp, fn, tp):
+-
+-    results = {}
+-
+-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+-
+-    results["accuracy"] = (tp + tn) / (tp + tn + fp + fn)
+-    results["precision"] = precision
+-    results["recall"] = recall
+-    results["f1_score"] = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+-    results["specificity"] = tn / (tn + fp) if (tn + fp) > 0 else 0
+-    results["true_positive"] = tp
+-    results["true_negative"] = tn
+-    results["false_positive"] = fp
+-    results["false_negative"] = fn
+-    results["support"] = tp + fn
+-
+-    return results
+-
+-
+-def calculate_weighted_metrics(y_true, y_pred, y_pred_proba, num_classes=2):
+-    metric_results = []
+-    
+-    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+-
+-    for weighting_type in ['macro', 'micro', 'weighted']:
+-
+-        results = {}
+-
+-        results["weighting_type"] = weighting_type
+-
+-        results["precision"] = precision_score(y_true, y_pred, average=weighting_type, zero_division=0)
+-        results["recall"] = recall_score(y_true, y_pred, average=weighting_type, zero_division=0)
+-        results["f1_score"] = f1_score(y_true, y_pred, average=weighting_type, zero_division=0)
+-        results["roc_auc"] = roc_auc_score(y_true_bin, y_pred_proba, average=weighting_type, multi_class='ovr')
+-        results["average_precision"] = average_precision_score(y_true_bin, y_pred_proba, average=weighting_type)
+-
+-        metric_results.append(results)
+-
+-    return pd.DataFrame(metric_results)
+-
+-
+-def calculate_per_class_metrics(y_true, y_pred, y_pred_proba, num_classes=2):
+-    metric_results = []
+-
+-    y_true_bin = label_binarize(y_true, classes=list(range(num_classes)))
+-
+-    for class_id in range(num_classes):
+-        y_true_binary = [1 if label == class_id else 0 for label in y_true]
+-        y_pred_binary = [1 if label == class_id else 0 for label in y_pred]
+-
+-        results = {}
+-        results["class"] = f"Class_{class_id}"
+-
+-        cm = confusion_matrix(y_true_binary, y_pred_binary, labels=[0, 1])
+-        tn, fp, fn, tp = cm.ravel()
+-        results.update(calculate_cm_metrics(tn, fp, fn, tp))
+-        
+-        if len(np.unique(y_true_bin[:, class_id])) > 1:
+-            results["roc_auc"] = roc_auc_score(y_true_bin[:, class_id], y_pred_proba[:, class_id])
+-            results["pr_auc"] = average_precision_score(y_true_bin[:, class_id], y_pred_proba[:, class_id])
+-        else:
+-            results["roc_auc"] = np.nan
+-            results["pr_auc"] = np.nan
+-
+-        metric_results.append(results)
+-
+-    return pd.DataFrame(metric_results)
+-
+-
+-def get_model_predictions(model, test_loader, criterion, device):
++def evaluate(model, frame, config, output_dir, split='validation', device='cpu'):
++    output_dir = Path(output_dir)
++    filename = output_dir / f'{split}_predictions.csv'
++    if filename.exists():
++        raise FileExistsError(filename)
++    records = frame.loc[frame.split.eq(split) & frame.eligible & frame.evaluation_eligible].copy().reset_index(drop=True)
++    if records.empty:
++        raise ValueError(f'No eligible {split} images')
++    head, batch_size = config['model']['head'], config['training']['batch_size']
+     model.eval()
+-    test_loss = 0.0
+-    y_all = []
+-    ypred_all = []
+-    ypred_prob_all = []
+-
+-    print("Running inference on test set...")
+-    with torch.no_grad():
+-        for i, (inputs, targets) in enumerate(test_loader):
+-            inputs = inputs.to(device)
+-            targets = targets.to(device)
+-            logits = model(inputs)
+-            loss = criterion(logits, targets)
+-            test_loss += loss.item() * inputs.size(0)
+-
+-            # Get probabilities
+-            proba = torch.softmax(logits, dim=1)
+-            ypred_prob_all.extend(proba.cpu().numpy())
+-
+-            _, preds = torch.max(logits, 1)
+-            y_all.extend(targets.cpu().numpy())
+-            ypred_all.extend(preds.cpu().numpy())
+-
+-            print(f"Batch {i+1}/{len(test_loader)}", end='\r')
+-
+-    test_loss /= len(test_loader.dataset)
+-    print("\nTest set evaluation complete!")
+-
+-    return test_loss, np.array(y_all), np.array(ypred_all), np.array(ypred_prob_all)
++    images, patches, binary_values, raw_values = [], [], [], []
++    with torch.inference_mode():
++        for row in records.itertuples():
++            crops = extract_patches(row.image_path)
++            probabilities, thresholds, binary = [], [], []
++            for start in range(0, 9, batch_size):
++                outputs = model(crops[start:start+batch_size].to(device))
++                logits, binary_logits = outputs if isinstance(outputs, tuple) else (outputs, None)
++                probabilities.append(grade_probabilities(logits, head).cpu())
++                if head != 'five_logits':
++                    thresholds.append(logits.sigmoid().cpu())
++                if binary_logits is not None:
++                    binary.append(binary_logits.sigmoid().cpu())
++            p = torch.cat(probabilities)
++            images.append(p.mean(0).numpy())
++            if binary:
++                binary_values.append(float(torch.cat(binary).mean()))
++            raw = torch.cat(thresholds) if thresholds else None
++            if raw is not None:
++                raw_values.append(raw)
++            for patch_index in range(9):
++                detail = {'image_id': row.image_id, 'patch_index': patch_index, 'split': split}
++                detail.update({f'probability_grade_{k}': float(p[patch_index, k-1]) for k in range(1, 6)})
++                if raw is not None:
++                    detail.update({f'raw_above_grade_{k}': float(raw[patch_index, k-1]) for k in range(1, 5)})
++                if binary:
++                    detail['binary_head_p_unacceptable'] = float(torch.cat(binary)[patch_index])
++                patches.append(detail)
++    p = np.stack(images)
++    metrics, details = calculate_combined_metrics(records, p, config['dataset']['graders'], .5,
++                                                 np.asarray(binary_values) if binary_values else None)
++    for name in details:
++        records[name] = details[name].to_numpy()
++    records[[f'probability_grade_{k}' for k in range(1, 6)]] = p
++    if binary_values:
++        records['binary_head_p_unacceptable'] = binary_values
++    metrics.update({'split': split, 'evaluation_unit': 'whole_image', 'patch_aggregation': 'mean of reconstructed patch grade probabilities',
++                    'primary_multiclass_metric': 'consensus_reference_quadratic_weighted_kappa',
++                    'primary_binary_rule': 'grade_argmax', 'monitoring_population_size': len(config['cohort']['monitor_image_ids'])})
++    consensus, per_grade, cm = calculate_validation_metrics(records.consensus_reference_grade.to_numpy(), records.predicted_grade.to_numpy())
++    metrics['consensus'] = consensus
++    metrics['per_grader'] = {}
++    for grader in config['dataset']['graders']:
++        available = records[grader].notna()
++        if available.any():
++            metrics['per_grader'][grader] = calculate_validation_metrics(records.loc[available, grader].to_numpy(), records.loc[available, 'predicted_grade'].to_numpy())[0]
++    if raw_values:
++        raw = torch.cat(raw_values)
++        metrics['ordinal_ordering'] = ordering_diagnostics(raw)
++        records['paper_threshold_count_grade'] = [1+int((r.mean(0) > .5).sum()) for r in raw_values]
++        metrics['paper_threshold_count'] = {'rule': 'reference only: 1+count(mean raw patch sigmoid > .5); image averaging is our adaptation',
++            'metrics': calculate_validation_metrics(records.consensus_reference_grade.to_numpy(), records.paper_threshold_count_grade.to_numpy())[0]}
++        changed_images = sum(bool((r[:, 1:] > r[:, :-1]).any()) for r in raw_values)
++        metrics['ordinal_ordering'].update({'projection_changed_image_count': changed_images, 'projection_changed_image_fraction': changed_images/len(records)})
++    metrics['secondary_subsets'] = {}
++    for label, ids in config['evaluation']['subsets'].items():
++        selected = records.image_id.isin(ids)
++        if selected.any():
++            metrics['secondary_subsets'][label] = calculate_combined_metrics(records.loc[selected], p[selected], config['dataset']['graders'], .5,
++                np.asarray(binary_values)[selected] if binary_values else None)[0]
++    clear = ~records.binary_reference_tied.to_numpy()
++    metrics['clear_majority'] = calculate_combined_metrics(records.loc[clear], p[clear], config['dataset']['graders'], .5,
++                np.asarray(binary_values)[clear] if binary_values else None)[0] if clear.any() else {'image_count': 0}
++    records.to_csv(filename, index=False)
++    pd.DataFrame(patches).to_csv(output_dir / f'{split}_patch_predictions.csv', index=False)
++    per_grade.to_csv(output_dir / f'{split}_per_grade_metrics.csv', index=False)
++    cm.to_csv(output_dir / f'{split}_confusion_matrix.csv', index_label='reference_grade')
++    confusion_figure(cm, output_dir / f'{split}_confusion_matrix.png')
++    for method in ('binary', 'binary_grade_argmax', 'binary_dedicated_head'):
++        if method in metrics:
++            m = metrics[method]
++            pd.DataFrame([[m['TN'], m['FP']], [m['FN'], m['TP']]], index=['acceptable', 'unacceptable'],
++                columns=['predicted_acceptable', 'predicted_unacceptable']).to_csv(output_dir / f'{split}_{method}_confusion_matrix.csv')
++    write_json(output_dir / f'{split}_metrics.json', metrics)
++    return metrics, records
+ 
+ 
+ def main():
+-
+-    parser = argparse.ArgumentParser(description='Test a trained model on held-out test set')
+-    parser.add_argument(
+-        '--model_filepath',
+-        type=str,
+-        required=True,
+-        help='Path to saved model.pth file'
+-    )
+-    parser.add_argument(
+-        '--dataset_filepath',
+-        type=str,
+-        required=True,
+-        help='Path to split CSV file'
+-    )
+-    parser.add_argument(
+-        '--images_dir',
+-        type=str,
+-        required=True,
+-        help='Base directory containing the images'
+-    )
+-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for testing')
+-    parser.add_argument('--output_dir', type=str, required=True, help='Directory to save test results')
+-
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--run-dir', type=Path, required=True)
++    parser.add_argument('--output-dir', type=Path, required=True)
++    parser.add_argument('--split', choices=['validation', 'test'], default='validation')
++    parser.add_argument('--enable-test', action='store_true')
+     args = parser.parse_args()
+-
+-    # Setup device
+-    device = torch.device(
+-        "mps" if torch.backends.mps.is_available() else
+-        ("cuda" if torch.cuda.is_available() else "cpu")
+-    )
+-    print(f"Using device: {device}")
+-
+-    # Transform
+-    transform = transforms.Compose([
+-        transforms.Resize((768, 768)),
+-        transforms.Grayscale(num_output_channels=1),
+-        transforms.ToTensor()
+-    ])
+-
+-    print("\n")
+-    print("Loading dataset")
+-    print("="*60)
+-
+-    df = pd.read_csv(args.dataset_filepath)
+-
+-    num_classes = len(set(df['image_grading'].unique()))
+-
+-    print('Loading dataset...')
+-    dataset = ImageQualityDataset(df, transform, base_image_dir=args.images_dir)
+-
+-    print('Patching dataset...')
+-    patched_dataset, df = subsample_subimages(dataset, method='all', df=df)
+-
+-    if len(patched_dataset[0]) == 3:
+-        # Split dataset using the mode column
+-        test_dataset = [(images, labels) for (images, labels, mode) in patched_dataset if mode == 'test']
+-    else:
+-        # Randomly split
+-        n_samples = len(patched_dataset)
+-        val_size = int(n_samples * args.val_split)
+-        test_size = int(n_samples * args.test_split)
+-
+-        train_dataset, x_remaining = train_test_split(
+-            patched_dataset,
+-            test_size=val_size+test_size,
+-            random_state=args.seed
+-        )
+-
+-        val_dataset, test_dataset = train_test_split(
+-            x_remaining,
+-            test_size=test_size,
+-            random_state=args.seed
+-        )
+-
+-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+-
+-    print(f"Test set size: {len(test_dataset)}")
+-    print(f"Image size (H, W): {patched_dataset[0][0].shape[1:]}")
+-
+-    print("\nLoading trained model")
+-
+-    if not os.path.exists(args.model_filepath):
+-        print(f"ERROR: Model file not found at {args.model_filepath}")
+-        print("\nPlease provide the correct path to your model.pth file")
+-        return
+-
+-    print(f"Loading model from: {args.model_filepath}")
+-
+-    # Load the saved model
+-    model = torch.load(args.model_filepath, map_location=device)
+-
+-    # If state_dict, load into model
+-    if isinstance(model, dict):
+-        print("Detected state_dict, loading into model...")
+-        print(num_classes)
+-        full_model = IQAnet(batch_normalization=True, output_sigmoid=False, num_classes=num_classes)
+-        full_model.load_state_dict(model)
+-        model = full_model
+-
+-    model.to(device)
+-    model.eval()
+-
+-    print("Model loaded successfully!")
+-
+-    class_counts = get_class_counts(test_loader)
+-
+-    print("\nTest set class distribution:")
+-    for class_label, count in class_counts.items():
+-        print(f"  Class {class_label}: {count} samples")
+-
+-    criterion = nn.CrossEntropyLoss()
+-
+-    print("\nEvaluating on test set")
+-
+-    test_loss, y_true, y_pred, y_pred_proba = get_model_predictions(model, test_loader, criterion, device)
+-
+-    weighted_metric_df = calculate_weighted_metrics(y_true, y_pred, y_pred_proba, num_classes=num_classes)
+-    per_class_metric_df = calculate_per_class_metrics(y_true, y_pred, y_pred_proba, num_classes=num_classes)
+-
+-    os.makedirs(args.output_dir, exist_ok=True)
+-
+-    weighted_metric_csv_path = os.path.join(args.output_dir, 'weighted_metrics.csv')
+-    weighted_metric_df.to_csv(weighted_metric_csv_path, index=False)
+-
+-    per_class_metric_csv_path = os.path.join(args.output_dir, 'per_class_metrics.csv')
+-    per_class_metric_df.to_csv(per_class_metric_csv_path, index=False)
+-
+-    if num_classes == 2:
+-        labels = [1, 0]
+-    else:
+-        labels = list(range(num_classes))
+-
+-    # Confusion matrix
+-    cm_df = pd.DataFrame(
+-        confusion_matrix(y_true, y_pred, labels=labels),
+-        index=[f'True_Class_{i}' for i in labels],
+-        columns=[f'Pred_Class_{i}' for i in labels]
+-    )
+-    cm_path = os.path.join(args.output_dir, 'confusion_matrix.csv')
+-    cm_df.to_csv(cm_path)
+-    print(f"Confusion matrix: {cm_path}")
+-
+-    # Predictions
+-    predictions_df = pd.DataFrame({
+-        'true_label': y_true,
+-        'predicted_label': y_pred,
+-        'correct': [1 if yt == yp else 0 for yt, yp in zip(y_true, y_pred)]
+-    })
+-    predictions_path = os.path.join(args.output_dir, 'predictions.csv')
+-    predictions_df.to_csv(predictions_path, index=False)
+-    print(f"All predictions saved: {predictions_path}")
++    if args.split == 'test' and not args.enable_test:
++        parser.error('Test evaluation requires explicit --enable-test')
++    if args.output_dir.exists():
++        raise FileExistsError(args.output_dir)
++    model, config, _ = load_checkpoint(args.run_dir)
++    frame, _ = load_workbook(args.run_dir / 'dataset.xlsx', check_files=True)
++    if args.split == 'test':
++        frame.loc[frame.split.eq('test'), 'evaluation_eligible'] = frame.loc[frame.split.eq('test'), 'eligible']
++    args.output_dir.mkdir(parents=True)
++    write_json(args.output_dir / 'evaluation_request.json', {'source_run': str(args.run_dir), 'split': args.split,
++                                                           'explicit_test_permission': args.enable_test})
++    evaluate(model, frame, config, args.output_dir, args.split)
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
+--- a/auto_qc/CNN/training.py
++++ b/auto_qc/CNN/training.py
+@@ -1,382 +1,279 @@
+-import os
++"""One configured training entry point for original and later IQAnet methods."""
+ import argparse
++import copy
++from datetime import datetime, timezone
++import logging
++from pathlib import Path
++import shutil
++import traceback
++import uuid
++
++import numpy as np
+ import pandas as pd
+-import shutil
+ import torch
+-import torch.nn as nn
+-import torch.optim as optim
+-from torchvision import transforms
+ from torch.utils.data import DataLoader
+-from sklearn.model_selection import train_test_split
+-
+-
+-from model import IQAnet
+-from dataset import ImageQualityDataset, subsample_subimages
+-from utils import get_class_counts, get_classes
+-
+-
+-def class_balance(train_loader, val_loader):
+-    set_class_weights = {'Training': None, 'Validation': None}
+-
+-    for loader_label, loader in zip(['Training', 'Validation'], [train_loader, val_loader]):
+-        class_counts = get_class_counts(loader)
+-
+-        label_sum = sum(class_counts.values())
+-        n_classes = len(class_counts)
+-
+-        class_weight = {}
+-        for class_label, count in class_counts.items():
+-            print(f"{loader_label} Class {class_label}: {count} samples")
+-            class_weight[class_label] = label_sum / (n_classes * count)
+-
+-        for weight_label, weight in class_weight.items():
+-            print(f"{loader_label} Class {weight_label} Weight: {weight:.4f}")
+-
+-        set_class_weights[loader_label] = class_weight
+-
+-    return set_class_weights['Training'], set_class_weights['Validation']
+-
+-
+-def train(model, train_loader, val_loader, criterion, optimizer, device):
+-    # Training
+-    model.train()
+-    train_loss = 0.0
+-    for i, (inputs, targets) in enumerate(train_loader):
+-        # Move inputs and targets to device
+-        inputs = inputs.to(device)
+-        targets = targets.to(device)
+-
+-        # Zero gradients
+-        optimizer.zero_grad()
+-
+-        # Forward pass
+-        class_prob = model(inputs)
+-        loss = criterion(class_prob, targets)
+-
+-        # Backward pass / optimization
+-        loss.backward()
+-        optimizer.step()
+-        train_loss += loss.item() * inputs.size(0)
+-        print(f"Batch {i + 1}/{len(train_loader)} - Loss: {loss.item():.4f}", end='\r')
+-
+-    train_loss /= len(train_loader.dataset)
+-
+-    # Validation
+-    model.eval()
+-    val_loss = 0.0
+-    with torch.no_grad():
+-        for inputs, targets in val_loader:
+-            inputs = inputs.to(device)
+-            targets = targets.to(device)
+-            class_prob = model(inputs)
+-            loss = criterion(class_prob, targets)
+-            val_loss += loss.item() * inputs.size(0)
+-        val_loss /= len(val_loader.dataset)
+-
+-    return train_loss, val_loss
+-
+-
+-def save_model(
+-    model,
+-    output_dir,
+-    best_val_loss,
+-    best_epoch,
+-    total_epochs,
+-    epoch_df,
+-    dataset_file,
+-    args,
+-    model_name=None,
+-    num_classes=2,
+-    summary_csv_path=None
+-):
+-
+-    # Creating folder name
+-    if model_name is None:
+-        if num_classes == 2:
+-            class_type = "singleclass"
++
++from .dataset import ImageQualityDataset, load_workbook, save_workbook, validate_records
++from .losses import loss_components
++from .model import make_model
++from .testing import evaluate
++from .utils import ROOT, class_weights, code_version, fingerprint, load_checkpoint, read_config, seed_everything, sha256, state_copy, write_json
++
++PATHS = {'hard_ganaav': ('five_logits', 'hard_ce'), 'hard_shane': ('five_logits', 'hard_ce'),
++         'ceiling_mean': ('five_logits', 'hard_ce'), 'exact_mean': ('five_logits', 'continuous_cdw_ce'),
++         'soft_categorical': ('five_logits', 'soft_ce')}
++
++
++def preflight(config):
++    if config.get('status') != 'ready':
++        raise ValueError(f'Configuration is blocked: {config.get("blocked_reasons")}')
++    dataset = ROOT / config['dataset']['path']
++    if sha256(dataset) != config['dataset']['sha256']:
++        raise ValueError('Configured workbook hash mismatch')
++    frame, metadata = load_workbook(dataset, check_files=True)
++    kind = metadata['target_kind']
++    if kind != config['dataset']['target_kind'] or metadata['graders'] != config['dataset']['graders']:
++        raise ValueError('Dataset target kind / graders differ from configuration')
++    if kind == 'ordinal':
++        mapping = {'coral': 'ordinal_bce', 'or_soft': 'ordinal_bce', 'or_soft_binary': 'joint_bce', 'frozen_binary': 'binary_bce'}
++        if mapping.get(config['model']['head']) != config['loss']['name']:
++            raise ValueError('Ordinal target/head/loss mismatch')
++        if config['loss'].get('threshold_weights') != [1, 1, 1, 1]:
++            raise ValueError('Historical ordinal objectives use four unweighted thresholds')
++    elif PATHS.get(kind) != (config['model']['head'], config['loss']['name']):
++        raise ValueError('Target/head/loss mismatch (fractional means are not class indices)')
++    if kind in ('ordinal', 'exact_mean') and config['loss']['class_weights']['mode'] != 'none':
++        raise ValueError('Ordinal/CDW objectives do not accept class weighting')
++    if config['loss']['name'] == 'joint_bce':
++        value = config['loss']['binary_loss_weight']
++        if isinstance(value, bool) or not np.isfinite(value) or value < 0:
++            raise ValueError('Binary loss weight must be finite and nonnegative')
++    for role, split in [('training', 'train'), ('monitor', 'validation')]:
++        ids = config['cohort'][role+'_image_ids']
++        if len(ids) != len(set(ids)) or not set(ids).issubset(frame.loc[frame.split.eq(split), 'image_id']):
++            raise ValueError(f'Invalid {role} IDs / split leakage')
++        frame[role+'_eligible'] = frame.image_id.isin(ids) & frame.eligible
++        if not frame[role+'_eligible'].any():
++            raise ValueError(f'Empty {role} population')
++    evaluation_ids = config['evaluation']['image_ids']
++    if len(evaluation_ids) != len(set(evaluation_ids)) or not set(evaluation_ids).issubset(frame.loc[frame.split.eq('validation'), 'image_id']):
++        raise ValueError('Evaluation IDs must be unique saved validation IDs')
++    frame['evaluation_eligible'] = frame.image_id.isin(evaluation_ids) & frame.eligible
++    # Test remains metadata only unless explicitly enabled by a separate invocation.
++    frame.loc[frame.split.eq('test'), 'evaluation_eligible'] = bool(config['evaluation']['enable_test']) & frame.loc[frame.split.eq('test'), 'eligible']
++    validate_records(frame, True)
++    preprocessing = config['preprocessing']
++    if preprocessing != {'resize': [768, 768], 'grayscale_channels': 1, 'patch_size': 256, 'grid_size': 3, 'method': 'all', 'horizontal_flip': True}:
++        raise ValueError('Unsupported preprocessing; refusing an implicit experimental change')
++    return frame, metadata
++
++
++def epoch_pass(model, loader, optimizer, loss, weights, device, reduction):
++    training = optimizer is not None
++    model.train(training)
++    totals = np.zeros(3)
++    count = 0
++    weighted_numerator = weighted_denominator = 0.
++    with torch.set_grad_enabled(training):
++        for inputs, targets in loader:
++            inputs, targets = inputs.to(device), targets.to(device)
++            if training:
++                optimizer.zero_grad(set_to_none=True)
++            values = loss_components(model(inputs), targets, loss, weights)
++            if not all(torch.isfinite(value) for value in values):
++                raise RuntimeError('Non-finite loss')
++            if training:
++                values[2].backward()
++                if any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters()):
++                    raise RuntimeError('Non-finite gradients')
++                optimizer.step()
++            totals += np.array([v.detach().item() for v in values]) * len(inputs)
++            count += len(inputs)
++            if loss['name'] == 'hard_ce' and weights is not None:
++                denominator = float(weights[targets].sum())
++                weighted_numerator += float(values[0].detach()) * denominator
++                weighted_denominator += denominator
++    totals /= count
++    if loss['name'] == 'hard_ce' and weights is not None and reduction == 'global_target_weight_sum':
++        totals[0] = totals[2] = weighted_numerator / weighted_denominator
++    elif reduction not in ('batch_size_weighted_batch_means', 'example_mean', 'global_target_weight_sum'):
++        raise ValueError('Unknown epoch loss aggregation')
++    return totals.tolist()
++
++
++def history_figure(history, path):
++    from PIL import Image, ImageDraw
++    image = Image.new('RGB', (640, 360), 'white')
++    draw = ImageDraw.Draw(image)
++    draw.text((20, 10), 'Train (blue) and validation (red) selection losses', fill='black')
++    maximum = max(1e-8, float(history[['train_primary_loss', 'val_primary_loss']].to_numpy().max()))
++    for name, colour in [('train_primary_loss', 'blue'), ('val_primary_loss', 'red')]:
++        points = [(40+i*560/max(1, len(history)-1), 320-280*v/maximum) for i, v in enumerate(history[name])]
++        if len(points) > 1:
++            draw.line(points, fill=colour, width=2)
+         else:
+-            class_type = "multiclass"
+-        model_name = (
+-            f"Auto_qc_{class_type}_lr_{args.learning_rate}_batch_{args.batch_size}"
+-            f"patience_{args.patience}_seed_{args.seed}_optim_AdamW"
+-        )
+-    model_dir = os.path.join(output_dir, model_name)
+-    os.makedirs(model_dir, exist_ok=True)
+-
+-    print(f"\n{'='*60}")
+-    print(f"Saving: {model_name}")
+-    print(f"{'='*60}")
+-
+-    # Save  weight
+-    model_path = os.path.join(model_dir, "model.pth")
+-    torch.save(model, model_path)
+-    print(f"model: {model_path}")
+-
+-    # Save learning curve
+-    curves_path = os.path.join(model_dir, "learning_curves.csv")
+-    epoch_df.to_csv(curves_path, index=False)
+-    print(f"Learning curves: {curves_path}")
+-
+-    shutil.copy(dataset_file, os.path.join(model_dir, os.path.basename(dataset_file)))
+-    
+-    # Save metrics summary
+-    model_params_data = {
+-        'model_name': [model_name],
+-        
+-        # Hyperparameters 
+-        'learning_rate': [args.learning_rate],
+-        'batch_size': [args.batch_size],
+-        'patience': [args.patience],
+-        'epochs_max': [args.epochs],
+-        'seed': [args.seed],
+-        'batch_normalization': [args.batch_normalization],
+-        'output_sigmoid': [args.output_sigmoid]
+-    }
+-
+-    model_params_df = pd.DataFrame(model_params_data)
+-    model_params_path = os.path.join(model_dir, "model_params.csv")
+-    model_params_df.to_csv(model_params_path, index=False)
+-    print(f"Model Params: {model_params_path}")
+-
+-    metrics_data = {
+-        'model_name': [model_name],
+-        'best_epoch': [best_epoch],
+-        'best_val_loss': [best_val_loss],
+-        'epochs_trained': [total_epochs],
+-        'train_loss_final': [epoch_df.iloc[-1]['train_loss']],
+-        'val_loss_final': [epoch_df.iloc[-1]['val_loss']],
+-        
+-    }
+-    metrics_df = pd.DataFrame(metrics_data)
+-    metrics_path = os.path.join(model_dir, "metrics.csv")
+-    metrics_df.to_csv(metrics_path, index=False)
+-    print(f"Metrics: {metrics_path}")
+-    
+-    # 4. Update experiments summary CSV
+-    if summary_csv_path is not None:
+-    
+-        summary_data = {
+-            'folder_name': model_name,
+-            
+-            # Hyperparameters
+-            'learning_rate': args.learning_rate,
+-            'batch_size': args.batch_size,
+-            'patience': args.patience,
+-            'epochs_max': args.epochs,
+-            'seed': args.seed,
+-            
+-            # Performance
+-            'best_val_loss': best_val_loss,
+-            'best_epoch': best_epoch,
+-            'epochs_trained': total_epochs,
+-            'train_loss_final': epoch_df.iloc[-1]['train_loss'],
+-            'val_loss_final': epoch_df.iloc[-1]['val_loss'],
+-            
+-        }
+-        
+-        if os.path.exists(summary_csv_path):
+-            summary_df = pd.read_csv(summary_csv_path)
+-            summary_df = pd.concat([summary_df, pd.DataFrame([summary_data])], ignore_index=True)
++            x, y = points[0]
++            draw.ellipse((x-2, y-2, x+2, y+2), fill=colour)
++    image.save(path)
++
++
++def train(config_path, output_root=Path('model_dir'), smoke=False, check_only=False):
++    config = copy.deepcopy(read_config(config_path))
++    frame, metadata = preflight(config)
++    if check_only:
++        print(f'CHECK PASS: {config["experiment_id"]}; train={int(frame.training_eligible.sum())}, monitor={int(frame.monitor_eligible.sum())}, evaluation={int(frame.evaluation_eligible.sum())}')
++        return None
++    if config.get('diagnostic_only') and not smoke:
++        raise ValueError('Diagnostic configurations may run only with --smoke')
++    if smoke:
++        # A declared diagnostic cohort, never labelled a scientific rerun.
++        for flag in ('training_eligible', 'monitor_eligible', 'evaluation_eligible'):
++            ids = frame.loc[frame[flag], 'image_id'].iloc[:2]
++            frame[flag] = frame.image_id.isin(ids)
++        config['training']['epochs'] = 1
++        config['diagnostic_smoke'] = {'real_images_per_split': 2, 'original_config': str(config_path), 'not_a_retrospective_result': True}
++        for key, flag in [('training', 'training_eligible'), ('monitor', 'monitor_eligible')]:
++            config['cohort'][key+'_image_ids'] = frame.loc[frame[flag], 'image_id'].tolist()
++        config['evaluation']['image_ids'] = frame.loc[frame.evaluation_eligible, 'image_id'].tolist()
++    name = f'{config["experiment_id"]}_{"smoke_" if smoke else ""}{datetime.now(timezone.utc):%Y%m%d_%H%M%S_%f}_{uuid.uuid4().hex[:8]}'
++    run = ROOT / output_root / name
++    run.mkdir(parents=True, exist_ok=False)
++    logger = logging.getLogger(name)
++    logger.setLevel(logging.INFO)
++    handlers = [logging.FileHandler(run / 'training.log', encoding='utf-8'), logging.StreamHandler()]
++    for handler in handlers:
++        handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
++        logger.addHandler(handler)
++    status = {'status': 'preparing', 'experiment_id': config['experiment_id'], 'run_dir': str(run), 'smoke': smoke}
++    write_json(run / 'run_status.json', status)
++    try:
++        config['code_version'] = code_version()
++        for source in sorted((ROOT / 'auto_qc').rglob('*.py')):
++            destination = run / 'source_code' / source.relative_to(ROOT)
++            destination.parent.mkdir(parents=True, exist_ok=True)
++            shutil.copyfile(source, destination)
++        config['dataset']['source_workbook_sha256'] = sha256(ROOT / config['dataset']['path'])
++        save_workbook(run / 'dataset.xlsx', frame, metadata)
++        # Ensure the exact saved records are the records training consumes.
++        frame, metadata = load_workbook(run / 'dataset.xlsx', check_files=True)
++        config['dataset']['run_snapshot_sha256'] = sha256(run / 'dataset.xlsx')
++        write_json(run / 'config.yaml', config)
++        seed = config['training']['seed']
++        seed_everything(seed)
++        device = config['training']['device']
++        if device == 'auto':
++            device = 'cuda' if torch.cuda.is_available() else 'cpu'
++        ordered = frame.set_index('image_id', drop=False)
++        train_frame = ordered.loc[config['cohort']['training_image_ids']].loc[lambda f: f.training_eligible].reset_index(drop=True)
++        validation = ordered.loc[config['cohort']['monitor_image_ids']].loc[lambda f: f.monitor_eligible].reset_index(drop=True)
++        weights = class_weights(train_frame, config['loss']['class_weights'])
++        if weights is not None:
++            weights = weights.to(device)
++        loaders = [DataLoader(ImageQualityDataset(part, metadata['target_kind'], augment=flip),
++                             batch_size=config['training']['batch_size'], shuffle=flip, num_workers=0,
++                             generator=torch.Generator().manual_seed(seed+offset))
++                   for part, flip, offset in [(train_frame, True, 0), (validation, False, 1)]]
++        seed_everything(seed)
++        model = make_model(config['model'], seed).to(device)
++        initial = fingerprint(model)
++        parameters = [p for p in model.parameters() if p.requires_grad]
++        options = dict(config['training']['optimizer_settings'])
++        optimizer_name = config['training']['optimizer']
++        if optimizer_name == 'AdamW':
++            optimizer = torch.optim.AdamW(parameters, **options)
++        elif optimizer_name == 'SGD':
++            optimizer = torch.optim.SGD(parameters, **options)
+         else:
+-            summary_df = pd.DataFrame([summary_data])
+-        
+-        summary_df.to_csv(summary_csv_path, index=False)
+-        print(f"summary updated: {summary_csv_path}")
+-        
+-    print(f"{'='*60}\n")
++            raise ValueError('Explicit supported optimiser required')
++        scheduler_settings = config['training']['scheduler']
++        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **scheduler_settings['settings']) if scheduler_settings['enabled'] else None
++        config['effective_runtime'] = {'device': device, 'optimizer': optimizer.defaults, 'initial_model_sha256': initial,
++                                       'class_weights': None if weights is None else weights.cpu().tolist(),
++                                       'batch_size_unit': 'patches', 'train_patches': len(loaders[0].dataset),
++                                       'monitor_patches': len(loaders[1].dataset), 'workers': 0,
++                                       'training_loader_seed': seed, 'validation_loader_seed': seed+1,
++                                       'resize_interpolation': 'bilinear', 'resize_antialias': True,
++                                       'normalization': 'ToTensor uint8 scaling only; no mean/std normalization',
++                                       'scheduler': None if scheduler is None else {name: getattr(scheduler, name) for name in
++                                           ('mode', 'factor', 'patience', 'threshold', 'threshold_mode', 'cooldown', 'min_lrs', 'eps')}}
++        write_json(run / 'config.yaml', config)
++        frozen_initial = fingerprint(model.source) if hasattr(model, 'source') else None
++        status.update(status='running', initial_model_sha256=initial)
++        write_json(run / 'run_status.json', status)
++        best, best_epoch, stale, best_state = float('inf'), None, 0, None
++        history = []
++        for epoch in range(1, config['training']['epochs']+1):
++            train_values = epoch_pass(model, loaders[0], optimizer, config['loss'], weights, device, config['loss']['epoch_aggregation'])
++            val_values = epoch_pass(model, loaders[1], None, config['loss'], weights, device, config['loss']['epoch_aggregation'])
++            row = dict(epoch=epoch, learning_rate=optimizer.param_groups[0]['lr'])
++            row.update({f'{prefix}_{component}_loss': v for prefix, values in [('train', train_values), ('val', val_values)]
++                        for component, v in zip(('primary', 'binary', 'total'), values)})
++            history.append(row)
++            pd.DataFrame(history).to_csv(run / 'training_history.csv', index=False)
++            selected = val_values[0]
++            if selected < best:
++                best, best_epoch, stale, best_state = selected, epoch, 0, state_copy(model)
++                torch.save({'schema': 'autoqc_cnn_v1', 'architecture': config['model'], 'model_state': best_state,
++                            'selected_epoch': epoch, 'selection_loss': selected, 'selection_rule': config['selection'],
++                            'dataset_sha256': sha256(run / 'dataset.xlsx')}, run / 'checkpoint.pth')
++            else:
++                stale += 1
++            if frozen_initial and (fingerprint(model.source) != frozen_initial or any(m.training for m in model.source.modules())):
++                raise RuntimeError('Frozen source changed or left evaluation mode')
++            if scheduler:
++                scheduler.step(selected)
++            status.update(epoch=epoch, selected_epoch=best_epoch, best_selection_loss=best)
++            write_json(run / 'run_status.json', status)
++            logger.info('epoch=%d train=%.6f val=%.6f best_epoch=%s', epoch, train_values[0], selected, best_epoch)
++            if stale >= config['training']['patience']:
++                break
++        model.load_state_dict(best_state, strict=True)
++        reloaded, _, _ = load_checkpoint(run, device)
++        if fingerprint(model) != fingerprint(reloaded):
++            raise RuntimeError('Saved best checkpoint reload differs')
++        model.eval()
++        inputs = next(iter(loaders[1]))[0].to(device)
++        with torch.inference_mode():
++            original, restored = model(inputs), reloaded(inputs)
++            original = original if isinstance(original, tuple) else (original,)
++            restored = restored if isinstance(restored, tuple) else (restored,)
++            if not all(torch.equal(a, b) for a, b in zip(original, restored)):
++                raise RuntimeError('Fixed-input checkpoint predictions differ')
++        metrics, predictions = evaluate(reloaded, frame, config, run, device=device)
++        if len(predictions) != int((frame.evaluation_eligible & frame.split.eq('validation')).sum()):
++            raise RuntimeError('Evaluation population changed')
++        if config['evaluation']['enable_test']:
++            evaluate(reloaded, frame, config, run, split='test', device=device)
++        history_figure(pd.DataFrame(history), run / 'training_history.png')
++        required = ['checkpoint.pth', 'dataset.xlsx', 'config.yaml', 'training_history.csv', 'training.log',
++                    'validation_predictions.csv', 'validation_metrics.json', 'run_status.json']
++        if any(not (run / name).is_file() for name in required):
++            raise RuntimeError('Missing required output')
++        status.update(status='completed', required_outputs_verified=True, validation_images=len(predictions),
++                      final_model_sha256=fingerprint(reloaded), test_evaluated=config['evaluation']['enable_test'],
++                      checkpoint_output_equality_verified=True)
++        write_json(run / 'run_status.json', status)
++        logger.info('COMPLETED %s', run)
++        return run
++    except BaseException as error:
++        status.update(status='failed', error=str(error), traceback=traceback.format_exc())
++        write_json(run / 'run_status.json', status)
++        logger.exception('FAILED; diagnostic artifacts preserved')
++        raise
++    finally:
++        for handler in handlers:
++            handler.close()
++            logger.removeHandler(handler)
+ 
+ 
+ def main():
+-    parser = argparse.ArgumentParser(description='Train a model to classify the quality of images')
+-    parser.add_argument('--seed', type=int, default=42, help='random seed')
+-    parser.add_argument('--batch_size', type=int, default=16, help='batch size')
+-    parser.add_argument('--epochs', type=int, default=1000, help='number of epochs')
+-    parser.add_argument('--learning_rate', type=float, default=0.001, help='learning rate')
+-    parser.add_argument('--optimizer', type=str, default='SGD', choices={'SGD', 'sgd', 'AdamW', 'adamw'}, help='optimizer to use')
+-    parser.add_argument('--reduce_lr', action='store_true', help='whether to use ReduceLROnPlateau scheduler')
+-    parser.add_argument('--patience', type=int, default=10, help='patience for early stopping')
+-    parser.add_argument('--batch_normalization', action='store_true', help='whether to use batch normalization')
+-    parser.add_argument('--output_sigmoid', action='store_true', help='whether to apply sigmoid activation to output layer (for binary classification)')
+-    parser.add_argument('--test_split', type=float, default=0.10, help='percentage of dataset to use for testing')
+-    parser.add_argument('--val_split', type=float, default=0.20, help='percentage of dataset to use for testing')
+-    parser.add_argument('--dataset_csv_path', type=str, required=True, help='path to datset csv file')
+-    parser.add_argument('--images_dir', type=str, help='base dir path for images (if not included in csv)')
+-    parser.add_argument('--output_dir', type=str, required=True, help='dir path to save models')
+-    parser.add_argument('--model_name', type=str, default=None, help='name for model folder (default: auto-generated based on hyperparameters)')
+-  
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--config', type=Path, required=True, help='JSON-formatted YAML 1.2 configuration')
++    parser.add_argument('--output-root', type=Path, default=Path('model_dir'))
++    parser.add_argument('--check-only', action='store_true')
++    parser.add_argument('--smoke', action='store_true', help='One epoch; two real training and two validation images; explicitly diagnostic')
+     args = parser.parse_args()
+-
+-    device = torch.device("mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu"))
+-    print('Using device:', device)
+-
+-    transform = transforms.Compose([
+-        transforms.Resize((768, 768)),
+-        transforms.Grayscale(num_output_channels=1),
+-        transforms.ToTensor()
+-    ])
+-
+-    df = pd.read_csv(args.dataset_csv_path)
+-
+-    print('Loading dataset...')
+-    dataset = ImageQualityDataset(df, transform, base_image_dir=args.images_dir)
+-
+-    print('Patching dataset...')
+-    patched_dataset, df = subsample_subimages(dataset, method='all', df=df)
+-
+-    # split
+-    if len(patched_dataset[0]) == 3:
+-        # Split dataset using the mode column
+-        train_dataset = [(images, labels) for (images, labels, mode) in patched_dataset if mode == 'train']
+-        val_dataset = [(images, labels) for (images, labels, mode) in patched_dataset if mode == 'val']
+-        test_dataset = [(images, labels) for (images, labels, mode) in patched_dataset if mode == 'test']
+-    else:
+-        # Randomly split
+-        n_samples = len(patched_dataset)
+-        val_size = int(n_samples * args.val_split)
+-        test_size = int(n_samples * args.test_split)
+-
+-        train_dataset, x_remaining = train_test_split(
+-            patched_dataset,
+-            test_size=val_size+test_size,
+-            random_state=args.seed
+-        )
+-
+-        val_dataset, test_dataset = train_test_split(
+-            x_remaining,
+-            test_size=test_size,
+-            random_state=args.seed
+-        )
+-
+-    # augment training data
+-    augment = transforms.Compose([
+-        transforms.RandomHorizontalFlip(p=1.0),
+-    ])
+-
+-    # append
+-    for i in range(len(train_dataset)):
+-        train_dataset.append((
+-            augment(train_dataset[i][0]), train_dataset[i][1]
+-        ))
+-
+-    # data loaders
+-    train_loader = DataLoader(
+-        train_dataset,
+-        batch_size=args.batch_size,
+-        shuffle=True
+-    )
+-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
+-
+-    print(f"\nOriginal Dataset size: {len(dataset)}, Patched Dataset size: {len(patched_dataset)}")
+-    print(f"\nTrain size: {len(train_dataset)}, Val size: {len(val_dataset)} Test size: {len(test_dataset)}")
+-    print(f"\nImage size (H, W): {patched_dataset[0][0].shape[1:]}")
+-
+-    train_class_weights, _ = class_balance(train_loader, val_loader)
+-    train_class_weights = list(train_class_weights.values())
+-
+-    classes = set(get_classes(train_loader))
+-    classes.update(get_classes(val_loader))
+-    num_classes = len(classes)
+-
+-    # outputs
+-    epoch_df = pd.DataFrame()
+-
+-    # Initialize the model
+-    model = IQAnet(
+-        num_classes=num_classes,
+-        batch_normalization=args.batch_normalization,
+-        output_sigmoid=args.output_sigmoid
+-    )
+-    model.to(device)
+-
+-    # Define loss function and optimizer
+-    weight_tensor = torch.tensor(train_class_weights, dtype=torch.float32).to(device)
+-    print(f"\nUsing class weights: {weight_tensor}")
+-
+-    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+-
+-    if args.optimizer.lower() == 'sgd':
+-        optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9)
+-    elif args.optimizer.lower() == 'adamw':
+-        optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.05)
+-    else:
+-        raise ValueError(f"Unsupported optimizer: {args.optimizer}")
+-
+-    scheduler = None
+-    if args.reduce_lr:
+-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+-            optimizer,
+-            mode='min',
+-            factor=0.5,
+-            patience=3,
+-            min_lr=0.00001,
+-            threshold=0.001
+-        )
+-
+-    # Initialise variables for tracking best model and early stopping
+-    best_val_loss = float('inf')
+-    best_epoch = 0
+-    best_model = None
+-    early_stopping_counter = 0
+-
+-    # epoch loop
+-    for epoch in range(args.epochs):
+-
+-        # Train & val the model for this epoch
+-        train_loss, val_loss = train(
+-            model,
+-            train_loader,
+-            val_loader,
+-            criterion,
+-            optimizer,
+-            device
+-        )
+-
+-        print(f"Epoch: {epoch + 1}/{args.epochs}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}")
+-
+-        if scheduler is not None:
+-            scheduler.step(val_loss)
+-
+-        # save the learning curve
+-        epoch_dict = {
+-            'epoch': epoch + 1,
+-            'train_loss': train_loss,
+-            'val_loss': val_loss
+-        }
+-
+-        epoch_df = pd.concat(
+-            [epoch_df, pd.DataFrame(epoch_dict, index=[0])],
+-            ignore_index=True,
+-            axis=0
+-        )
+-
+-        # Check for early stopping
+-        if val_loss < best_val_loss:
+-            best_val_loss = val_loss
+-            best_model = model.state_dict()
+-            best_epoch = epoch + 1
+-            early_stopping_counter = 0
+-        else:
+-            early_stopping_counter += 1
+-            if early_stopping_counter >= args.patience:
+-                print("Early stopping triggered!")
+-                break
+-
+-    # Load best model
+-    model.load_state_dict(best_model)
+-    model.eval()
+-
+-    save_model(
+-        best_model,
+-        args.output_dir,
+-        best_val_loss,
+-        best_epoch,
+-        epoch + 1,
+-        epoch_df,
+-        args.dataset_csv_path,
+-        args,
+-        num_classes=num_classes,
+-        model_name=args.model_name
+-    )
++    train(args.config, args.output_root, args.smoke, args.check_only)
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/auto_qc/CNN/utils.py b/auto_qc/CNN/utils.py
+--- a/auto_qc/CNN/utils.py
++++ b/auto_qc/CNN/utils.py
+@@ -1,18 +1,95 @@
++"""Run provenance, reproducible RNG and checkpoint helpers."""
++import hashlib
++import importlib.metadata
++import json
++from pathlib import Path
++import random
++import subprocess
+ 
+-def get_classes(loader):
+-    classes = []
+-    for _, labels in loader:
+-        for label in labels:
+-            if label.item() not in classes:
+-                classes.append(label.item())
+-    return classes
++import numpy as np
++import torch
++
++ROOT = Path(__file__).resolve().parents[2]
+ 
+ 
+-def get_class_counts(loader):
+-    class_counts = {}
+-    for _, labels in loader:
+-        for label in labels:
+-            if label.item() not in class_counts:
+-                class_counts[label.item()] = 0
+-            class_counts[label.item()] += 1
+-    return class_counts
++def sha256(path):
++    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
++
++
++def read_config(path):
++    # JSON is a YAML 1.2 subset; emitted .yaml files need no extra parser dependency.
++    with Path(path).open(encoding='utf-8') as handle:
++        return json.load(handle)
++
++
++def write_json(path, value):
++    path = Path(path)
++    temp = path.with_suffix(path.suffix + '.tmp')
++    temp.write_text(json.dumps(value, indent=2, allow_nan=False, ensure_ascii=False) + '\n', encoding='utf-8')
++    temp.replace(path)
++
++
++def seed_everything(seed):
++    random.seed(seed)
++    np.random.seed(seed)
++    torch.manual_seed(seed)
++    if torch.cuda.is_available():
++        torch.cuda.manual_seed_all(seed)
++    torch.backends.cudnn.benchmark = False
++    torch.backends.cudnn.deterministic = True
++
++
++def state_copy(model):
++    return {name: value.detach().cpu().clone() for name, value in model.state_dict().items()}
++
++
++def fingerprint(model):
++    result = hashlib.sha256()
++    for name, value in model.state_dict().items():
++        result.update(name.encode())
++        result.update(value.detach().cpu().contiguous().numpy().tobytes())
++    return result.hexdigest()
++
++
++def code_version():
++    command = ['git', '-c', f'safe.directory={ROOT.as_posix()}', '-C', str(ROOT)]
++    result = subprocess.run(command + ['rev-parse', 'HEAD'], capture_output=True, text=True)
++    status = subprocess.run(command + ['status', '--porcelain'], capture_output=True, text=True)
++    return {'commit': result.stdout.strip() or 'unknown', 'dirty': bool(status.stdout.strip()),
++            'source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in sorted((ROOT / 'auto_qc').rglob('*.py'))},
++            'dependencies': {name: importlib.metadata.version(name) for name in
++                             ('torch', 'torchvision', 'numpy', 'pandas', 'Pillow', 'openpyxl', 'scikit-learn')}}
++
++
++def class_weights(frame, specification):
++    mode = specification['mode']
++    if mode == 'none':
++        return None
++    if mode == 'explicit':
++        weights = np.asarray(specification['values'], dtype=float)
++    elif mode == 'inverse_frequency':
++        if 'target_class_index' not in frame:
++            raise ValueError('Inverse frequency requires hard training labels')
++        counts = np.bincount(frame.target_class_index.to_numpy(dtype=int), minlength=5)
++        if (counts == 0).any():
++            raise ValueError('Cannot estimate inverse-frequency weights with an absent training class')
++        weights = len(frame) / (5 * counts)
++    else:
++        raise ValueError(f'Unknown weight mode: {mode}')
++    if weights.shape != (5,) or not np.isfinite(weights).all() or (weights <= 0).any():
++        raise ValueError('Five positive finite weights required in grade order 1..5')
++    return torch.tensor(weights, dtype=torch.float32)
++
++
++def load_checkpoint(run_dir, device='cpu'):
++    from .model import make_model
++    run_dir = Path(run_dir)
++    config = read_config(run_dir / 'config.yaml')
++    saved = torch.load(run_dir / 'checkpoint.pth', map_location='cpu', weights_only=True)
++    if saved.get('schema') != 'autoqc_cnn_v1' or saved.get('architecture') != config['model']:
++        raise ValueError('Checkpoint architecture/configuration mismatch')
++    if saved['dataset_sha256'] != sha256(run_dir / 'dataset.xlsx'):
++        raise ValueError('Checkpoint dataset snapshot mismatch')
++    model = make_model(config['model'], config['training']['seed'], load_source=False)
++    model.load_state_dict(saved['model_state'], strict=True)
++    return model.to(device).eval(), config, saved

@@ -1,0 +1,7 @@
+condition,project,images,patients
+baseline,ASTELLAS,23,3
+baseline,DARC-P2,134,71
+baseline,ONL1204-GA,16,4
+non_baseline,ASTELLAS,23,3
+non_baseline,DARC-P2,134,71
+non_baseline,ONL1204-GA,16,4

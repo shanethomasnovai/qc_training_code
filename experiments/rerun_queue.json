@@ -1,0 +1,712 @@
+{
+  "schema": 1,
+  "inventory_sha256": "a0b0a2c3447bbfdeeba93305f12ced06fa976b0db4d6570ca9f61c72f780eae7",
+  "completed_training_records": 50,
+  "entries": [
+    {
+      "historical_experiment": "continuous_cdw_ce_20261016_141333_357_a3cffefb",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_001_continuous.yaml",
+      "config_sha256": "4dc89dc860053691daa4e1d3071b92729e7f0dd29afe2d8f73d1f1a9c40be69a"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_20261016_150640_885_44b9a483",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_002_continuous.yaml",
+      "config_sha256": "d32b892a041d815c637de260a972c12ad7bd1de610de59c9189c999f21c4589a"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha0p5_lr0p0003_seed42_20261019_093532_479",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_003_continuous.yaml",
+      "config_sha256": "a311f43360f91deed4ef255e32b3f070305d79f658aa6b4916301d2b55baa7c3"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha0p75_lr0p0003_seed42_reviewed_v1_20261020_144603_071",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_004_continuous.yaml",
+      "config_sha256": "87058edb187f397b0c870628cda66be3ca49b34b4fd3172c46261da7716d496f"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha10_lr0p0003_seed42_20261019_110054_257",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_005_continuous.yaml",
+      "config_sha256": "6e306319761a7ee9c7934dd93ba97555afa4ae22f0366059d1687b16c8f3c69f"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0002_seed42_20261019_112253_546",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_006_continuous.yaml",
+      "config_sha256": "d94592f17ed6ce40d8544bc93454236056179fde9741b3ede0e98be4a2e3a346"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed42_20261019_114359_667",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_007_continuous.yaml",
+      "config_sha256": "2d4dc256ee3712db143013f78953bbc9918b8d75329e2fd455367cf1c8043f26"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_008_continuous.yaml",
+      "config_sha256": "1536a9ab533594697178ce6d6a5eefaee785e363e258b0409d149e0bdee67f6b"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_v1_baseline_only_20261026_092938_720749_60a848ca",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_009_continuous.yaml",
+      "config_sha256": "efaf0ee8f5ccdf730aaf0d916e5aedd72c65eaf3b2744c3a8c5c012fc26b28ab"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_v1_without_baseline_20261023_093142_989948_b63896f4",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_010_continuous.yaml",
+      "config_sha256": "188405a0fbe28bba5f2b7dd0227dedf59fbe89aae6c74a30641d0171bb242af5"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed43_reviewed_v2_20261019_163926_348",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_011_continuous.yaml",
+      "config_sha256": "86334306d31bad76c096f4a869dc5ece4f279d959348e16a5700a1a1bc2f6da0"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed7_reviewed_20261019_140419_033",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_012_continuous.yaml",
+      "config_sha256": "497fed25fe59c869811392253fa190d8f4c732016a520feb2b1f8bc2ed4bc37c"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_lr0p0003_seed7_reviewed_20261019_141902_376",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_013_continuous.yaml",
+      "config_sha256": "bbbf70e9cc28134ed01ee89e54dd3e5bbbee3d51b08f86f30a3af06eef74e45f"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1_seed42",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_014_continuous.yaml",
+      "config_sha256": "17b7a807b0e3e5616276a5b8a52a1bf2f218b6f14e61158ae7890a9c531b79da"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1p25_lr0p0003_seed42_reviewed_v1_20261020_133632_013",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_015_continuous.yaml",
+      "config_sha256": "ead8637725701ce262a60edad5c4cf7a7255a9141ca3b10008bc59e888cbe659"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1p5_lr0p0003_seed42_reviewed_v1_20261020_134829_804",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_016_continuous.yaml",
+      "config_sha256": "5375c3d1a7e10822bc4c6d206cc10134427384e39c6c6f1f411754fef6db5955"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha1p75_lr0p0003_seed42_reviewed_v1_20261020_140357_629",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_017_continuous.yaml",
+      "config_sha256": "4d41825d9bded54023f5a6faee82417e535dd7362a55c996cc21908cdb8ca5d8"
+    },
+    {
+      "historical_experiment": "continuous_cdw_ce_alpha2_lr0p0003_seed42_20261019_095231_002",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_018_continuous.yaml",
+      "config_sha256": "21addb0d768a3d23e32d1c50f1f25b40f751110b767bf96c4ab105952c4eba32"
+    },
+    {
+      "historical_experiment": "or_soft_binary_baseline_only_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed42_20261029_125847_561916_455a6777",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_019_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_019_or_soft_binary_seed42",
+      "signature": "78955b407dc7a94642098af7b7e7b5e1d269062e20dfafa85475cde084901b9a",
+      "config_sha256": "0df5e3788899b71938c3a3ed788c6c91d8662f4eda74147b6e2081403d466df9"
+    },
+    {
+      "historical_experiment": "or_soft_binary_patient_matched_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed123_20261029_143746_614345_f05cf8f8",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_020_or_soft_binary_seed123.yaml",
+      "experiment_id": "rerun_020_or_soft_binary_seed123",
+      "signature": "e3610f6cac20fa523adf41431e3adac855b62280cb68253dfd6d9885742469f8",
+      "config_sha256": "e84ae29f5f9fe9184eec5f3f4d9cc309df1476c4abd57e8c5bb4f6dbd4716282"
+    },
+    {
+      "historical_experiment": "or_soft_binary_patient_matched_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed7_20261029_142519_057450_a28c97c5",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_021_or_soft_binary_seed7.yaml",
+      "experiment_id": "rerun_021_or_soft_binary_seed7",
+      "signature": "13c6aae17b57c2a36371930375f5382fbeb5b9033a46b4cc04b816c9a548a677",
+      "config_sha256": "152d92393e429ad5aa68ee587281e403cf38887beb1a947c7a110f5d22b4ab08"
+    },
+    {
+      "historical_experiment": "or_soft_binary_patient_matched_non_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed123_20261029_150400_069459_14ab5599",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_022_or_soft_binary_seed123.yaml",
+      "experiment_id": "rerun_022_or_soft_binary_seed123",
+      "signature": "e5f732d8d883821e12f5b0c116e4d7936c266e9c823e2e27fec201099afefa31",
+      "config_sha256": "a9573afec316cccda5e4118dda8070df72d54e3284c5a337a6ea6613175ac9a4"
+    },
+    {
+      "historical_experiment": "or_soft_binary_patient_matched_non_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed7_20261029_144809_121889_32103eb3",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_023_or_soft_binary_seed7.yaml",
+      "experiment_id": "rerun_023_or_soft_binary_seed7",
+      "signature": "1d5f321f1b1bab7a8f2d9507e913a14d4dbcdd4acd4206da13797163729d2395",
+      "config_sha256": "6a4436e3f0dea7cf3f44caa91b6bc7f4069091eeb1638f525672e184fedacbf4"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw0.25_seed42_20261028_125827_057414_bd4d8753",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_024_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_024_or_soft_binary_seed42",
+      "signature": "ec62d74dc2eb17eded805751746885700df9285e1670f2b1ef1d7f33f18f4964",
+      "config_sha256": "cb60e83ed54c4e463f651e6df37f6698393d4b2ae9471cd33bfc3405f813064b"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw0.5_seed42_20261028_131430_646862_23157cd7",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_025_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_025_or_soft_binary_seed42",
+      "signature": "940cd831604353a9b19e86447c4bb79b04857f2628a03533d54dfa2d7a8dbe67",
+      "config_sha256": "ba16876ba4288739b09e8e2b563509103a2c357952f655fe7db48402f32f9242"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_seed123_20261028_141817_148143_da3b6566",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_026_or_soft_binary_seed123.yaml",
+      "experiment_id": "rerun_026_or_soft_binary_seed123",
+      "signature": "e3b6f49bd472727623fd516831ebe384311603d50bf00a733c6ad02c955c5119",
+      "config_sha256": "f763dc8c9c51d11aab49458ffd9622d85f2f68bd8b712c032c8d32cafbd6832b"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_seed42_20261028_113025_825580_5e0c39ce",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_027_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_027_or_soft_binary_seed42",
+      "signature": "fea9c7eaa7bacaca306cd32cc6de27f7885c1c1c76a1de476f37462ace178275",
+      "config_sha256": "6feab415a9a28821b9a40bc207518b1fcced9f5f600c6006605fdc5dd2414add"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_seed7_20261028_135507_558210_34e1511b",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_028_or_soft_binary_seed7.yaml",
+      "experiment_id": "rerun_028_or_soft_binary_seed7",
+      "signature": "6db3c47da94cb8e29810035dbad03d4cd024570a5d4e409cc5c5359ff81cee63",
+      "config_sha256": "326a1f154d80f63c237f46da33d7ee6e3e0c3c7a66d73fdb6be545dbf7712b0d"
+    },
+    {
+      "historical_experiment": "or_soft_binary_with_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw2_seed42_20261028_133714_616499_43f9bdea",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_029_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_029_or_soft_binary_seed42",
+      "signature": "761b52e0ca011d3475dcf9b7a74206790d05ce328c27198ca05daf2e4eb86b04",
+      "config_sha256": "be1c84ec41570f0732373f0f5b61095a114317793c2a682c87405bb3ae588a6b"
+    },
+    {
+      "historical_experiment": "or_soft_binary_without_baseline_lr0.0001_epochs100_schedpat2_wd0.05_binaryw1_baseline_condition_seed42_20261029_120501_841293_e6e58db1",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_030_or_soft_binary_seed42.yaml",
+      "experiment_id": "rerun_030_or_soft_binary_seed42",
+      "signature": "0eefb3ca47eb34d21a094d163c7d91a12317d9c2ebb3fd9f65c68fb6a425682b",
+      "config_sha256": "a87217c4a9bb6f4f8dcc19408bed585002c5a325a9387bba5b8931a87d15b21d"
+    },
+    {
+      "historical_experiment": "or_soft_frozen_binary_lr0.0001_schedpat2_wd0.05_seed42_20261028_122950_649362_e9bd2cbc",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_031_or_soft_frozen_binary_seed42.yaml",
+      "experiment_id": "rerun_031_or_soft_frozen_binary_seed42",
+      "signature": "e13e558fad06daa6b9d8da9545e1a902d82c9f1ec12424d78a62fbba028477af",
+      "config_sha256": "0abde09b17e74c9717256aec13e27c5f2ebbdbe30b20e4321c5b64ec6605cdbc"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_schedpat2_seed123_20261027_133500_679114_802065f8",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_032_or_soft_seed123.yaml",
+      "experiment_id": "rerun_032_or_soft_seed123",
+      "signature": "add03ce34b3a21c76e6524ba71964e6ca7708b97b75852676af63ba998d3e844",
+      "config_sha256": "161069ac3f27d6d2b5ab410b2ff760e2d7d980e699a15119f863bca064b44e89"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_schedpat2_seed42_20261027_124025_250039_e9fd4c92",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_033_or_soft_seed42.yaml",
+      "experiment_id": "rerun_033_or_soft_seed42",
+      "signature": "71bb47e1032f9b981a26be6bd739ef0be22ecfb8040350b9164427937ab8ec27",
+      "config_sha256": "187c0121dcc7c332586a24ec6ad58e2b75744b11c86bb1e1a49c1567070200aa"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_schedpat2_seed7_20261027_131859_926884_7a2720a8",
+      "status": "ready",
+      "reasons": [],
+      "config": "configs/reruns/rerun_034_or_soft_seed7.yaml",
+      "experiment_id": "rerun_034_or_soft_seed7",
+      "signature": "fb729e765bbfb8397a86b67dc4e91c18e5940303f137a6f86aa953529dbef1ca",
+      "config_sha256": "7ac04482cece38ebb90320f55cd3df9a0768055d7158901db67f2de03ab814c3"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_schedpat2_wd0.01_seed42_20261028_092324_215536_a619d6dc",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_035_or_soft_seed42.yaml",
+      "experiment_id": "rerun_035_or_soft_seed42",
+      "signature": "66283e71a735edd199c920d76c4bd3520ff4078c10df4209728cd798f10c2eba",
+      "config_sha256": "1dc00e7f4258c083e9d7bd9d8b6a0327e619fad38480608848a523c8e3627172"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_schedpat5_seed42_20261027_125826_166546_5044601a",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_036_or_soft_seed42.yaml",
+      "experiment_id": "rerun_036_or_soft_seed42",
+      "signature": "3fd0ac46e438d1631db75d00f042bba93079da7e520354566753d53c37d543fd",
+      "config_sha256": "a082b910d44224e2431ed9553bb5e49f2018f90249791b5d1e8862cb457bcb5a"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_seed123_20261027_111644_395648_87f5b2e6",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_037_or_soft_seed123.yaml",
+      "experiment_id": "rerun_037_or_soft_seed123",
+      "signature": "b2f9ed58d91c6a8478ceb53bda9f2a2af8835416d7d62014e9b87804926e5745",
+      "config_sha256": "45bce06591d45b0a3170df77029805575bc7d373d2ef854a5d5bff1fa6cfbbe7"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_seed42_20261026_130028_313051_8beb5794",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_038_or_soft_seed42.yaml",
+      "experiment_id": "rerun_038_or_soft_seed42",
+      "signature": "61ff54ed27c7faf915c6b23a5258aa0df48ec28e9aa5fe8670b1e63417f1220d",
+      "config_sha256": "f525c1d3cef8e78267439c0dac30929cd8b6539ea420fa6ab2f1b684a2560fe4"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_seed7_20261027_104533_187021_e45ad6c4",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_039_or_soft_seed7.yaml",
+      "experiment_id": "rerun_039_or_soft_seed7",
+      "signature": "7a25fe00f1c615a4f83aaa5d3c9c175cec05d9c56cceec7110988ac6079c12b6",
+      "config_sha256": "f5e0ad5495b385b8999d1495681156a2102840fbadc6af152a6b1ec97dcbf056"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0001_epochs100_seed7_20261027_114708_124039_e020ebbb",
+      "status": "duplicate_excluded",
+      "reasons": [],
+      "config": "configs/reruns/rerun_040_or_soft_seed7.yaml",
+      "experiment_id": "rerun_040_or_soft_seed7",
+      "signature": "7a25fe00f1c615a4f83aaa5d3c9c175cec05d9c56cceec7110988ac6079c12b6",
+      "duplicate_of": "or_soft_with_baseline_lr0.0001_epochs100_seed7_20261027_104533_187021_e45ad6c4",
+      "config_sha256": "eeeb0d26ddf2edf2a2138cf864d2c41f8b25ada3b0139c8f33bbfa25e4306163"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0002_epochs100_seed42_20261027_101318_272301_e4bdbf7a",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_041_or_soft_seed42.yaml",
+      "experiment_id": "rerun_041_or_soft_seed42",
+      "signature": "595d5a1b47f348a160d6410dcfe81a8f58dc510232f43af761bbcc2131c0ae42",
+      "config_sha256": "77a5e22b1eb215ed71593a4e5762ec5603563cdded43e9ab90734f2d53595a10"
+    },
+    {
+      "historical_experiment": "or_soft_with_baseline_lr0.0003_epochs100_seed42_20261026_124852_818787_ef117b06",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_042_or_soft_seed42.yaml",
+      "experiment_id": "rerun_042_or_soft_seed42",
+      "signature": "7c3b033d929148e20105452e26a22c9b56b8bd9d5f2f2710cea631d75c624434",
+      "config_sha256": "d37cc897468c21021b4d4502b7f139e01e46a4aa457322f5f2943097e8ddbf05"
+    },
+    {
+      "historical_experiment": "previousStudent_20261013_130615_231_f9f4cb56",
+      "status": "blocked",
+      "reasons": [
+        "No saved effective optimiser/loss/weighting configuration; folder names are not evidence"
+      ],
+      "config": "configs/reruns/blocked_043_ganaav.yaml",
+      "config_sha256": "1e98c375c4ec71ccf037990c2bdc9efa6543ac453a9dfe52740cc2d14b83ed8e"
+    },
+    {
+      "historical_experiment": "shane_20261013_121344_539_933fb0f3",
+      "status": "blocked",
+      "reasons": [
+        "No saved effective optimiser/loss/weighting configuration; folder names are not evidence"
+      ],
+      "config": "configs/reruns/blocked_044_shane.yaml",
+      "config_sha256": "40a59db1cf1e1a0928da670a32a76346c8136b39f2e7a9f1ce29b00100e4c672"
+    },
+    {
+      "historical_experiment": "soft_20261016_122507_325_f156d443",
+      "status": "blocked",
+      "reasons": [
+        "Unknown saved scheduler settings"
+      ],
+      "config": "configs/reruns/blocked_045_soft.yaml",
+      "config_sha256": "8da9a33ce78710f5c210b6eb8cec64d3ddf23743b154e2fd8e982ffa4614cc9d"
+    },
+    {
+      "historical_experiment": "soft_ordinal_coral_with_baseline_lr0.0001_epochs100_seed42_20261026_111448_426067_6873c6b7",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_046_soft_ordinal_coral_seed42.yaml",
+      "experiment_id": "rerun_046_soft_ordinal_coral_seed42",
+      "signature": "92c70e0e19c47f42f42e49dba3d2bb017845728bf791953a115d7d7781d172f3",
+      "config_sha256": "9adb143faa166b6c656e7151739ed3a1c95384533586ed13fcf3e9b0c7875f25"
+    },
+    {
+      "historical_experiment": "soft_ordinal_coral_with_baseline_lr0.0001_seed42_20261026_104256_060158_26b74a3d",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_047_soft_ordinal_coral_seed42.yaml",
+      "experiment_id": "rerun_047_soft_ordinal_coral_seed42",
+      "signature": "5d3028b17270981483640f86b9c076641c8bd9526e8acd5543c50a6704982c4e",
+      "config_sha256": "d1a07afc44ce03b3edffe27409e00da362dbe7a505dbf8cd265ff53fce819e06"
+    },
+    {
+      "historical_experiment": "soft_ordinal_coral_with_baseline_lr0.0003_epochs100_seed42_20261026_120911_727598_bf83d9e4",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_048_soft_ordinal_coral_seed42.yaml",
+      "experiment_id": "rerun_048_soft_ordinal_coral_seed42",
+      "signature": "1151676501d3db61b0e86f9db195946e94cf56b78480de5e455b02061622fec1",
+      "config_sha256": "55a73a953e3a1753d83c8dac59da744ce227053373482cfe294dc839d018fc0f"
+    },
+    {
+      "historical_experiment": "soft_ordinal_coral_with_baseline_lr0.001_epochs100_seed42_20261026_115041_920000_1d12c028",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_049_soft_ordinal_coral_seed42.yaml",
+      "experiment_id": "rerun_049_soft_ordinal_coral_seed42",
+      "signature": "82507574343cf66d7310b8c2cff9d169649280a64b7b6f9ea97297cb9659841d",
+      "config_sha256": "3c56efa1f5135b44910b8e812ff402985950ff57b23ed3abec84999c44644aca"
+    },
+    {
+      "historical_experiment": "soft_ordinal_coral_with_baseline_seed42_20261026_095959_821894_564a757a",
+      "status": "deferred_by_user",
+      "reasons": [
+        "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons."
+      ],
+      "config": "configs/reruns/rerun_050_soft_ordinal_coral_seed42.yaml",
+      "experiment_id": "rerun_050_soft_ordinal_coral_seed42",
+      "signature": "0ff0502f6aa63a604675f5a940acb618384fca386608e0ab6343979c7fc1f1cf",
+      "config_sha256": "64eadf64394ea0591a1a81efee5460dce09a28568e13b9814516072a6f971864"
+    }
+  ],
+  "compatible_previous_queue_sha256": [
+    "f9e84b68c924db6493c1cd8efc61ef67bb144b3e41a406cf22d0ad6f681c5115",
+    "46278dcf8058c0f11d0809ea417f0ba662bda7c6459a29d1b7592b55577f93e4"
+  ],
+  "dataset_path_relocations": [
+    {
+      "config": "configs/reruns/rerun_019_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_019_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_020_or_soft_binary_seed123.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_020_or_soft_binary_seed123.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_021_or_soft_binary_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_021_or_soft_binary_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_022_or_soft_binary_seed123.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_022_or_soft_binary_seed123.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_023_or_soft_binary_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_023_or_soft_binary_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_024_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_024_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_025_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_025_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_026_or_soft_binary_seed123.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_026_or_soft_binary_seed123.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_027_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_027_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_028_or_soft_binary_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_028_or_soft_binary_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_029_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_029_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_030_or_soft_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_030_or_soft_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_031_or_soft_frozen_binary_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_031_or_soft_frozen_binary_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_032_or_soft_seed123.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_032_or_soft_seed123.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_033_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_033_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_034_or_soft_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_034_or_soft_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_035_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_035_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_036_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_036_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_037_or_soft_seed123.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_037_or_soft_seed123.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_038_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_038_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_039_or_soft_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_039_or_soft_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_040_or_soft_seed7.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_040_or_soft_seed7.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_041_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_041_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_042_or_soft_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_042_or_soft_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_046_soft_ordinal_coral_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_046_soft_ordinal_coral_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_047_soft_ordinal_coral_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_047_soft_ordinal_coral_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_048_soft_ordinal_coral_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_048_soft_ordinal_coral_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_049_soft_ordinal_coral_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_049_soft_ordinal_coral_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    },
+    {
+      "config": "configs/reruns/rerun_050_soft_ordinal_coral_seed42.yaml",
+      "original_config": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\configs\\reruns\\rerun_050_soft_ordinal_coral_seed42.yaml",
+      "original_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "archived_path": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code_backup_20261030_181643_7664328\\dataset_versions_20261030_192603_7502752\\datasets\\ratings_8cc903b74f9f\\ordinal_cross_entropy_dataset.xlsx",
+      "sha256": "a7a4e88e1a946b2d1388d1dd48c5e6b95ce39da4d46f64d92f0bafe5fd7ab2b5"
+    }
+  ],
+  "dataset_relocation_reason": "Archive older dataset versions; historical record values, hashes and training settings unchanged",
+  "scope_selection": {
+    "requested_at": "2026-11-02",
+    "reason": "User requested skipping very early runs: superseded OR-Soft tuning and CORAL explorations; retain selected scheduler-patience-2 OR-Soft reference and recent binary-head comparisons.",
+    "deferred_configs": [
+      "configs/reruns/rerun_035_or_soft_seed42.yaml",
+      "configs/reruns/rerun_036_or_soft_seed42.yaml",
+      "configs/reruns/rerun_037_or_soft_seed123.yaml",
+      "configs/reruns/rerun_038_or_soft_seed42.yaml",
+      "configs/reruns/rerun_039_or_soft_seed7.yaml",
+      "configs/reruns/rerun_041_or_soft_seed42.yaml",
+      "configs/reruns/rerun_042_or_soft_seed42.yaml",
+      "configs/reruns/rerun_046_soft_ordinal_coral_seed42.yaml",
+      "configs/reruns/rerun_047_soft_ordinal_coral_seed42.yaml",
+      "configs/reruns/rerun_048_soft_ordinal_coral_seed42.yaml",
+      "configs/reruns/rerun_049_soft_ordinal_coral_seed42.yaml",
+      "configs/reruns/rerun_050_soft_ordinal_coral_seed42.yaml"
+    ],
+    "legacy_worker_stop_marker": "USER_DEFERRED_EARLY_RERUN",
+    "backup": "C:\\Users\\Shane\\Documents\\QCTinkering\\qc_training_code\\model_dir\\queue_scope_before_20261102"
+  }
+}

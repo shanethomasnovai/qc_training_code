@@ -1,0 +1,49 @@
+{
+  "schema": "autoqc_dataset_build_v1",
+  "ganaav": {
+    "path": "data/baseline_annotation_20261023/multi_class_qc_dataset.csv",
+    "sha256": "fe4ce21f55fed44d9c00238b5b8ee38c4dfd9b0d2348d3ee73e8b9c146e918bc"
+  },
+  "shane": {
+    "path": "data/shane-image-file-listing.csv",
+    "sha256": "704b80ee5e5aa6137ce16adcaf9689d3c1f81d80b7dd926b8efd47a0faa0502f"
+  },
+  "shane_authority": "This is the raw version used by the recorded historical snapshots; earliest/original authority among differing copies remains unresolved",
+  "split": {
+    "path": "prepared_visus_nhp/manifest.csv",
+    "sha256": "39f67fe6c7c430c9dc5d0ad249322db01edabd85f2c7fc1255bd2cee14c157ca"
+  },
+  "allowed_unmatched_ids": [
+    "VISUS-NHP_KNA_E055_OD_D28_17102022_5.1_0",
+    "VISUS-NHP_KNA_E055_OD_D42_31102022_5.1_0",
+    "VISUS-NHP_KNA_E055_OD_D56_14112022_5.1_0",
+    "VISUS-NHP_KNA_E122_OD_D42_3102022_5.1_0",
+    "VISUS-NHP_KNA_E126_OS_D07_2982022_5.1_0",
+    "VISUS-NHP_KNA_E126_OS_D56_17102022_5.1_0",
+    "VISUS-NHP_KNA_O9835_OD_D14_692022_5.1_0",
+    "VISUS-NHP_KNA_O9835_OS_D07_3082022_5.1_0"
+  ],
+  "output_dir": "datasets",
+  "profiles": [
+    {
+      "name": "reviewed_v2",
+      "ratings": {
+        "path": "runs/continuous_cdw_ce_alpha1_lr0p0003_seed43_reviewed_v2_20261019_163926_348/ratings_input.xlsx",
+        "sha256": "281f9fcc448e7093ed0eff8dcabd717cae6d26891cb64b2d34b545d4b9590963",
+        "sheet": "Grades"
+      },
+      "graders": [
+        "ganaav_grade",
+        "shane_grade",
+        "reviewer1_grade",
+        "reviewer2_grade",
+        "reviewer3_grade"
+      ],
+      "expected_shane_changes": 9
+    }
+  ],
+  "original_archive_sha256": "6ccfb237b8358e28caaa9a0cf152b9aa52dc3352371fbcda5d73fc6c185a6c34",
+  "original_commit": "unknown",
+  "ganaav_identity_confirmation": "project owner, 2026-10-30",
+  "active_label_version": "reviewed-v2; most recent reviewed snapshot"
+}

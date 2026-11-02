@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "reference_run": "runs/or_soft_with_baseline_lr0.0001_epochs100_schedpat2_seed42_20261027_124025_250039_e9fd4c92",
+  "reference_config_sha256": "87dd090078357847c723c9e982d820875b77d34d9b8ac78155f47282fe393275",
+  "canonical_manifest": "runs/continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111/manifest.csv",
+  "canonical_manifest_sha256": "dfe73e22f802a33ecbb4d52c361cd6e0436219ac73975d21ee5638fa6d23d73a",
+  "ratings_snapshot": "runs/continuous_cdw_ce_alpha1_lr0p0003_seed42_reviewed_20261019_125530_111/ratings_input.xlsx",
+  "ratings_sha256": "8cc903b74f9f92f4d03e52758a741ca3171c4f3f3e49794b2cbfaf2c54acd84c",
+  "ratings_version": "reviewed-v1",
+  "selected_checkpoint_sha256": "c92a049347f77b62ee48b592e8ebd71699d5bdf6efb33db82efcff4e13092eb2",
+  "selected_targets_sha256": "35ddb5f78f772c7742530a73f554407f37020f2917a74892e74f2c4c0e862474",
+  "held_out_project": "VISUS-NHP",
+  "expected_splits": {
+    "train": {"images": 508, "patients": 78},
+    "validation": {"images": 127, "patients": 20},
+    "test": {"images": 26, "patients": 9}
+  },
+  "settings": {
+    "loss_selection": "or_soft", "seed": 42, "learning_rate": 0.0001,
+    "optimizer": "AdamW", "weight_decay": 0.05, "scheduler_patience": 2,
+    "epochs": 100, "patience": 10, "batch_size": 16, "dropout": 0.5,
+    "baseline_mode": "include", "batch_normalization": false,
+    "head_type": "independent_linear_thresholds_v1", "checkpoint_schema": "or_soft_v1"
+  }
+}
