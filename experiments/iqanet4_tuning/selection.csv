@@ -1,6 +1,6 @@
-﻿"model","rank","parameter","value","config","status","output","error"
-"iqanet4","0","Baseline","original","C:\Users\Shane\Desktop\qc_data\models\iqanet4_or_soft_binary_lambda1_seed42_20261111_155229_571655_22b51ca3\iqanet4_or_soft_binary.yaml","completed","C:\Users\Shane\Desktop\qc_data\models\iqanet4_or_soft_binary_lambda1_seed42_20261111_155229_571655_22b51ca3",""
-"iqanet4","1","Learning rate","3e-05","experiments/iqanet4_tuning/lr3e-5.yaml","completed","C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_lr3e-5_seed42_20261113_102949_908840_a3b3fedc",""
-"iqanet4","2","Learning rate","0.0003","experiments/iqanet4_tuning/lr3e-4.yaml","completed","C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_lr3e-4_seed42_20261113_112219_439226_0048aef5",""
-"iqanet4","3","Weight decay","0.01","experiments/iqanet4_tuning/wd0p01.yaml","paused","C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_wd0p01_seed42_20261113_113914_734557_ee226f70","Paused by user; best checkpoint retained. Resume restarts training for this run."
-"iqanet4","4","Binary loss weight","0.5","experiments/iqanet4_tuning/lambda0p5.yaml","pending","",""
+model,rank,parameter,value,config,status,output,error
+iqanet4,0,Baseline,original,C:\Users\Shane\Desktop\qc_data\models\iqanet4_or_soft_binary_lambda1_seed42_20261111_155229_571655_22b51ca3\iqanet4_or_soft_binary.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\iqanet4_or_soft_binary_lambda1_seed42_20261111_155229_571655_22b51ca3,
+iqanet4,1,Learning rate,3e-05,experiments/iqanet4_tuning/lr3e-5.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_lr3e-5_seed42_20261113_102949_908840_a3b3fedc,
+iqanet4,2,Learning rate,0.0003,experiments/iqanet4_tuning/lr3e-4.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_lr3e-4_seed42_20261113_112219_439226_0048aef5,
+iqanet4,3,Weight decay,0.01,experiments/iqanet4_tuning/wd0p01.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\iqanet4_tune_wd0p01_seed42_20261116_094431_486272_c3d4af2f,
+iqanet4,4,Binary loss weight,0.5,experiments/iqanet4_tuning/lambda0p5.yaml,running,,
