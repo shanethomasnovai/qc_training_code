@@ -1,15 +1,35 @@
 """Load saved architectures; evaluate patches and whole images separately."""
 import argparse
 from pathlib import Path
+import tempfile
 
 import numpy as np
 import pandas as pd
 import torch
 
-from .dataset import VOTES, extract_patches, load_workbook
+from .dataset import VOTES, extract_inputs
+from data.labels import load_workbook
 from .losses import grade_probabilities, ordering_diagnostics
 from .metrics import calculate_combined_metrics, calculate_validation_metrics
 from .utils import load_checkpoint, write_json
+
+
+def prediction_summary(records, grader_columns):
+    """Readable image-level export; metrics still use the complete records.
+
+    Keep only selected grader ratings, with no historical/source-grade aliases.
+    Full inputs remain in the run's dataset.xlsx; raw thresholds stay in the
+    patch predictions. Binary probabilities are probabilities of unacceptable.
+    """
+    columns = ['image_id', 'patient_id', *grader_columns,
+               'consensus_reference_grade', 'reference_tied', 'predicted_grade',
+               *[f'probability_grade_{k}' for k in range(1, 6)],
+               'binary_reference', 'binary_reference_tied',
+               'binary_grade_argmax_prediction', 'p_unacceptable',
+               'binary_summed_probability_prediction']
+    columns += [name for name in ('binary_head_p_unacceptable', 'binary_head_prediction')
+                if name in records]
+    return records.loc[:, columns].copy()
 
 
 def confusion_figure(matrix, path):
@@ -30,7 +50,7 @@ def confusion_figure(matrix, path):
     image.save(path)
 
 
-def evaluate(model, frame, config, output_dir, split='validation', device='cpu'):
+def evaluate(model, frame, config, output_dir, split='validation', device='cpu', compact=False):
     output_dir = Path(output_dir)
     filename = output_dir / f'{split}_predictions.csv'
     if filename.exists():
@@ -39,13 +59,14 @@ def evaluate(model, frame, config, output_dir, split='validation', device='cpu')
     if records.empty:
         raise ValueError(f'No eligible {split} images')
     head, batch_size = config['model']['head'], config['training']['batch_size']
+    input_mode = config.get('preprocessing', {}).get('input_mode', 'patches')
     model.eval()
     images, patches, binary_values, raw_values = [], [], [], []
     with torch.inference_mode():
         for row in records.itertuples():
-            crops = extract_patches(row.image_path)
+            crops = extract_inputs(row.image_path, input_mode)
             probabilities, thresholds, binary = [], [], []
-            for start in range(0, 9, batch_size):
+            for start in range(0, len(crops), batch_size):
                 outputs = model(crops[start:start+batch_size].to(device))
                 logits, binary_logits = outputs if isinstance(outputs, tuple) else (outputs, None)
                 probabilities.append(grade_probabilities(logits, head).cpu())
@@ -60,7 +81,7 @@ def evaluate(model, frame, config, output_dir, split='validation', device='cpu')
             raw = torch.cat(thresholds) if thresholds else None
             if raw is not None:
                 raw_values.append(raw)
-            for patch_index in range(9):
+            for patch_index in range(len(crops)):
                 detail = {'image_id': row.image_id, 'patch_index': patch_index, 'split': split}
                 detail.update({f'probability_grade_{k}': float(p[patch_index, k-1]) for k in range(1, 6)})
                 if raw is not None:
@@ -76,7 +97,10 @@ def evaluate(model, frame, config, output_dir, split='validation', device='cpu')
     records[[f'probability_grade_{k}' for k in range(1, 6)]] = p
     if binary_values:
         records['binary_head_p_unacceptable'] = binary_values
-    metrics.update({'split': split, 'evaluation_unit': 'whole_image', 'patch_aggregation': 'mean of reconstructed patch grade probabilities',
+    metrics.update({'split': split, 'evaluation_unit': 'whole_image', 'input_mode': input_mode,
+                    'inputs_per_image': 1 if input_mode == 'whole_image' else 9,
+                    'patch_aggregation': ('none; one resized whole image' if input_mode == 'whole_image'
+                                          else 'mean of reconstructed patch grade probabilities'),
                     'primary_multiclass_metric': 'consensus_reference_quadratic_weighted_kappa',
                     'primary_binary_rule': 'grade_argmax', 'monitoring_population_size': len(config['cohort']['monitor_image_ids'])})
     consensus, per_grade, cm = calculate_validation_metrics(records.consensus_reference_grade.to_numpy(), records.predicted_grade.to_numpy())
@@ -103,12 +127,13 @@ def evaluate(model, frame, config, output_dir, split='validation', device='cpu')
     clear = ~records.binary_reference_tied.to_numpy()
     metrics['clear_majority'] = calculate_combined_metrics(records.loc[clear], p[clear], config['dataset']['graders'], .5,
                 np.asarray(binary_values)[clear] if binary_values else None)[0] if clear.any() else {'image_count': 0}
-    records.to_csv(filename, index=False)
-    pd.DataFrame(patches).to_csv(output_dir / f'{split}_patch_predictions.csv', index=False)
-    per_grade.to_csv(output_dir / f'{split}_per_grade_metrics.csv', index=False)
-    cm.to_csv(output_dir / f'{split}_confusion_matrix.csv', index_label='reference_grade')
-    confusion_figure(cm, output_dir / f'{split}_confusion_matrix.png')
-    for method in ('binary', 'binary_grade_argmax', 'binary_dedicated_head'):
+    prediction_summary(records, config['dataset']['graders']).to_csv(filename, index=False)
+    if not compact:
+        pd.DataFrame(patches).to_csv(output_dir / f'{split}_patch_predictions.csv', index=False)
+        per_grade.to_csv(output_dir / f'{split}_per_grade_metrics.csv', index=False)
+        cm.to_csv(output_dir / f'{split}_confusion_matrix.csv', index_label='reference_grade')
+        confusion_figure(cm, output_dir / f'{split}_confusion_matrix.png')
+    for method in (() if compact else ('binary', 'binary_grade_argmax', 'binary_dedicated_head')):
         if method in metrics:
             m = metrics[method]
             pd.DataFrame([[m['TN'], m['FP']], [m['FN'], m['TP']]], index=['acceptable', 'unacceptable'],
@@ -128,8 +153,14 @@ def main():
         parser.error('Test evaluation requires explicit --enable-test')
     if args.output_dir.exists():
         raise FileExistsError(args.output_dir)
-    model, config, _ = load_checkpoint(args.run_dir)
-    frame, _ = load_workbook(args.run_dir / 'dataset.xlsx', check_files=True)
+    model, config, checkpoint = load_checkpoint(args.run_dir)
+    if 'dataset_snapshot' in checkpoint:
+        with tempfile.TemporaryDirectory(prefix='autoqc-eval-') as directory:
+            snapshot = Path(directory) / 'dataset.xlsx'
+            snapshot.write_bytes(checkpoint['dataset_snapshot'])
+            frame, _ = load_workbook(snapshot, check_files=True)
+    else:
+        frame, _ = load_workbook(args.run_dir / 'dataset.xlsx', check_files=True)
     if args.split == 'test':
         frame.loc[frame.split.eq('test'), 'evaluation_eligible'] = frame.loc[frame.split.eq('test'), 'eligible']
     args.output_dir.mkdir(parents=True)

@@ -5,3 +5,5 @@ scikit-learn
 torch
 torchvision
 openpyxl
+matplotlib
+PyYAML

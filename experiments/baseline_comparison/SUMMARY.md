@@ -18,12 +18,12 @@ Constructor and feature-operation syntax matches the archive. Eight synthetic fo
 | Module | Changes from the original |
 |---|---|
 | `model.py` | Directly extended: exposes `forward_features`; adds ordered CORAL, independent OR-Soft, joint binary and frozen binary heads using the same features. |
-| `dataset.py` | Substantially rewritten: versioned Excel inputs, explicit targets and grade indices, missing-rating handling, patient/split checks, lazy patch loading. |
+| `dataset.py` | Retains the original image loader and `patch_dataset`/`subsample_subimages` structure. Small extensions accept original column names, supplied scalar/vector targets, and a separate lazy patch adapter preserving current sample/flip order. Workbook preparation and target construction live in `datasets/generate_datasets.py`. |
 | `training.py` | Substantially rewritten: shared configured entry point, explicit objectives, seeds, cloned best weights, unique run directories and complete saved outputs. |
 | `testing.py` | Substantially rewritten: saved-architecture loading, whole-image probability averaging, consensus/distribution/binary evaluation and separate optional test evaluation. |
 | `utils.py` | Replaced small loader-count helpers with explicit ordered weights, RNG/provenance and checkpoint helpers. |
 
-Added supporting modules: `losses.py`, `metrics.py`, `generate_datasets.py`, `rerun.py`, `collect_results.py`; plus configurations and focused tests. Original `kfold.py` is retained in the reference copy only; the current pipeline requires fixed patient assignments before patches.
+Added supporting modules: `losses.py`, `metrics.py`, `rerun.py`, `collect_results.py`. Dataset generation scripts live in `datasets/`; configurations and focused tests are kept separately. Original `kfold.py` is retained in the reference copy only; the current pipeline requires fixed patient assignments before patches.
 
 ## Scientific changes — distinguish from implementation fixes
 
@@ -33,7 +33,7 @@ Added supporting modules: `losses.py`, `metrics.py`, `generate_datasets.py`, `re
 - Current active workbooks use reviewed-v2; retrospective reruns retain their recorded rating versions. These versions must be identified in comparisons.
 - Original CNN testing scores patches; current evaluation averages patch probabilities to images. Optimiser, weighting, LR and scheduler choices are explicit experiment settings, not universally unchanged baseline defaults.
 
-Implementation fixes include best-state copying, class-indexed weights, seeding, mandatory patient splits, architecture-aware loading and output-overwrite protection. The existing test file covers these separately from experimental method choices.
+Implementation fixes include best-state copying, class-indexed weights, seeding, mandatory patient splits, architecture-aware loading and output-overwrite protection. The restored legacy patch helpers also transpose unfold columns before reshaping and retain every image in the unlabelled multi-image branch. These two helper corrections are separate from the active nine-patch protocol. The existing test file covers implementation fixes separately from experimental method choices.
 
 ## Review directly
 

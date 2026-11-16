@@ -1,0 +1,43 @@
+# Recipe for rebuilding the five label tables under data/datasets/reviewed_v2/.
+# Paths are relative to the project root. SHA-256 checks prevent silent changes
+# to the source ratings or saved patient split. No new split is generated.
+schema: autoqc_dataset_build_v1
+
+ganaav:
+  path: data/sources/ganaav_labels.csv
+  sha256: fe4ce21f55fed44d9c00238b5b8ee38c4dfd9b0d2348d3ee73e8b9c146e918bc
+
+# Shane's grades come only from the reviewed workbook below.
+shane_authority: Use shane_grade from the current reviewed ratings source only
+
+split:
+  path: prepared_visus_nhp/manifest.csv
+  sha256: 39f67fe6c7c430c9dc5d0ad249322db01edabd85f2c7fc1255bd2cee14c157ca
+
+# Known source images outside the fixed split population. Other unmatched IDs
+# are treated as errors; these exclusions are recorded in the output manifest.
+allowed_unmatched_ids:
+  - VISUS-NHP_KNA_E055_OD_D28_17102022_5.1_0
+  - VISUS-NHP_KNA_E055_OD_D42_31102022_5.1_0
+  - VISUS-NHP_KNA_E055_OD_D56_14112022_5.1_0
+  - VISUS-NHP_KNA_E122_OD_D42_3102022_5.1_0
+  - VISUS-NHP_KNA_E126_OS_D07_2982022_5.1_0
+  - VISUS-NHP_KNA_E126_OS_D56_17102022_5.1_0
+  - VISUS-NHP_KNA_O9835_OD_D14_692022_5.1_0
+  - VISUS-NHP_KNA_O9835_OS_D07_3082022_5.1_0
+
+output_dir: data/datasets
+
+# One active ratings version. The name becomes the output subfolder.
+profiles:
+  - name: reviewed_v2
+    ratings:
+      path: data/sources/ratings.xlsx
+      sha256: 281f9fcc448e7093ed0eff8dcabd717cae6d26891cb64b2d34b545d4b9590963
+      sheet: Grades
+    graders:
+      - ganaav_grade
+      - shane_grade
+      - reviewer1_grade
+      - reviewer2_grade
+      - reviewer3_grade

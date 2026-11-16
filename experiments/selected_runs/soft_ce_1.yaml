@@ -1,0 +1,45 @@
+# Selected historical configuration on current reviewed labels.
+local_root: C:/Users/Shane/Desktop/qc_data
+
+experiment_name: selected_soft_ce_1
+
+model:
+  head: five_logits
+  dropout_p: 0.5
+  batch_normalization: false
+
+data:
+  dataset: reviewed_v2/multigrader_labels.xlsx
+  target: soft_categorical
+
+training:
+  seed: 42
+  epochs: 50
+  batch_size: 16
+  patience: 10
+  device: auto
+
+optimizer:
+  name: AdamW
+  lr: 0.001
+  weight_decay: 0.05
+
+scheduler:
+  enabled: true
+  factor: 0.5
+  patience: 2
+  min_lr: 1.0e-05
+
+loss:
+  name: soft_ce
+  class_weights:
+    mode: explicit
+    values:
+    - 1.8142857142857143
+    - 0.5772727272727273
+    - 0.5613259668508287
+    - 1.167816091954023
+    - 12.7
+
+evaluation:
+  enable_test: false

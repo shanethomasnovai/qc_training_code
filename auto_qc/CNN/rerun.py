@@ -12,12 +12,55 @@ import traceback
 import numpy as np
 import pandas as pd
 
-from .dataset import canonical_graders, load_workbook
-from .generate_datasets import build_datasets
+from data.labels import canonical_graders, generate_targets, load_workbook, logical_hash, save_workbook
+from data.tools.generate_datasets import RULES, dataset_metadata, join_sources, read_build_config
 from .training import preflight, train
 from .utils import ROOT, read_config, sha256, write_json
 
 GRADERS = ['ganaav_grade', 'shane_grade', 'reviewer1_grade', 'reviewer2_grade', 'reviewer3_grade']
+
+
+def build_historical_datasets(config_path):
+    """Rebuild the older eight-workbook format only for historical queue preparation.
+
+    Normal dataset generation writes five plain label tables. Historical queues
+    use self-contained target workbooks, sometimes with several ratings versions.
+    """
+    build = read_build_config(config_path)
+    variants = {
+        'ganaav_labels.xlsx': ('hard_ganaav', ['ganaav_grade']),
+        'shane_labels.xlsx': ('hard_shane', ['shane_grade']),
+        'ganaav_shane_ceiling_labels.xlsx': ('ceiling_mean', ['ganaav_grade', 'shane_grade']),
+        'ganaav_shane_mean_labels.xlsx': ('exact_mean', ['ganaav_grade', 'shane_grade']),
+        'ganaav_shane_soft_labels.xlsx': ('soft_categorical', ['ganaav_grade', 'shane_grade']),
+        'multigrader_soft_labels.xlsx': ('soft_categorical', None),
+        'multigrader_mean_labels.xlsx': ('exact_mean', None),
+        'ordinal_targets.xlsx': ('ordinal', None),
+    }
+    directories = [ROOT / build['output_dir'] / profile['name'] for profile in build['profiles']]
+    for directory in directories:
+        if directory.exists():
+            raise FileExistsError(directory)
+    summary = []
+    for profile, directory in zip(build['profiles'], directories):
+        frame, exclusions = join_sources(build, profile)
+        directory.mkdir(parents=True, exist_ok=False)
+        for filename, (kind, selected) in variants.items():
+            graders = canonical_graders(selected or profile['graders'])
+            missing_policy = 'available' if selected is None else 'require_all'
+            dataset = generate_targets(frame, kind, graders, missing_policy)
+            metadata = dict(dataset_metadata(build, profile, exclusions), schema='autoqc_dataset_v1',
+                            target_kind=kind, graders=graders, mean_missing_policy=missing_policy,
+                            label_rule=RULES[kind])
+            path = directory / filename
+            save_workbook(path, dataset, metadata)
+            load_workbook(path, check_files=True)
+            summary.append({'path': relative(path), 'images': len(dataset),
+                            'eligible': int(dataset.eligible.sum()),
+                            'logical_sha256': logical_hash(dataset), 'file_sha256': sha256(path)})
+        pd.DataFrame(exclusions).to_csv(directory / 'exclusions.csv', index=False)
+    write_json(ROOT / build['output_dir'] / 'build_results.json', summary)
+    return summary
 
 
 def relative(path):
@@ -42,27 +85,20 @@ def prepare(inventory):
     for digest in hashes:
         if digest not in snapshots:
             continue
-        snapshot = pd.read_excel(snapshots[digest], sheet_name='Grades')
-        raw = pd.read_csv(ROOT / 'data/shane-image-file-listing.csv')
-        raw['image_id'] = raw.image_filename.map(lambda p: Path(str(p).replace('\\', '/')).stem)
-        aligned = snapshot.set_index('image_id').loc[raw.image_id]
-        changes = int((aligned.shane_grade.to_numpy() != raw.image_grading.to_numpy()).sum())
         profiles.append({'name': 'ratings_'+digest[:12], 'ratings': {'path': relative(snapshots[digest]), 'sha256': digest, 'sheet': 'Grades'},
-                         'graders': GRADERS, 'expected_shane_changes': changes})
+                         'graders': GRADERS})
     split = ROOT / 'prepared_visus_nhp/manifest.csv'
-    ganaav = ROOT / 'data/baseline_annotation_20261023/multi_class_qc_dataset.csv'
-    shane = ROOT / 'data/shane-image-file-listing.csv'
+    ganaav = ROOT / 'data/sources/ganaav_labels.csv'
     exclusions = read_config(ROOT / 'prepared_visus_nhp/split_report.json')['shane_only_ids']
     build = {'schema': 'autoqc_dataset_build_v1', 'ganaav': {'path': relative(ganaav), 'sha256': sha256(ganaav)},
-             'shane': {'path': relative(shane), 'sha256': sha256(shane)},
-             'shane_authority': 'This is the raw version used by the recorded historical snapshots; earliest/original authority among differing copies remains unresolved',
+             'shane_authority': 'Recorded ratings source for each historical run; no comparison with earlier Shane grades',
              'split': {'path': relative(split), 'sha256': sha256(split)}, 'allowed_unmatched_ids': exclusions,
              'output_dir': 'model_dir/historical_datasets', 'profiles': profiles,
              'original_archive_sha256': '6ccfb237b8358e28caaa9a0cf152b9aa52dc3352371fbcda5d73fc6c185a6c34',
              'original_commit': 'unknown', 'ganaav_identity_confirmation': 'project owner, 2026-10-30'}
-    (ROOT / 'configs').mkdir(exist_ok=True)
-    write_json(ROOT / 'configs/historical_datasets.yaml', build)
-    build_datasets(ROOT / 'configs/historical_datasets.yaml')
+    (ROOT / 'experiments/configs').mkdir(parents=True, exist_ok=True)
+    write_json(ROOT / 'experiments/configs/historical_datasets.yaml', build)
+    build_historical_datasets(ROOT / 'experiments/configs/historical_datasets.yaml')
     queue, seen = [], {}
     for number, row in enumerate(completed, 1):
         historical = row['experiment_id']
@@ -175,7 +211,7 @@ def prepare(inventory):
                                  'projection': 'inference_only_unweighted_least_squares_descending_pava_v1' if head in ('or_soft', 'or_soft_binary', 'frozen_binary') else 'none'}}
         scientific = {k: v for k, v in config.items() if k not in ('experiment_id', 'historical')}
         signature = hashlib.sha256(json.dumps(scientific, sort_keys=True).encode()).hexdigest()
-        entry.update(config=f'configs/reruns/{identifier}.yaml', experiment_id=identifier, signature=signature)
+        entry.update(config=f'experiments/configs/reruns/{identifier}.yaml', experiment_id=identifier, signature=signature)
         if signature in seen:
             entry.update(status='duplicate_excluded', duplicate_of=seen[signature])
         else:
@@ -193,7 +229,7 @@ def prepare(inventory):
     write_json(ROOT / 'experiments/rerun_queue.json', {'schema': 1, 'inventory_sha256': sha256(inventory),
                'completed_training_records': len(completed), 'entries': queue})
     template = read_config(ROOT / next(e['config'] for e in queue if e['status'] == 'ready'))
-    current = read_config(ROOT / 'configs/datasets.yaml')
+    current = read_config(ROOT / 'data/tools/datasets.yaml')
     prepare_diagnostic_configs(template, current['profiles'][0], current['output_dir'])
     print(json.dumps({state: sum(e['status'] == state for e in queue) for state in ('ready', 'blocked', 'duplicate_excluded')}))
     return queue
@@ -205,7 +241,7 @@ def materialize_blocked_configs(entries, saved):
             continue
         name = entry['historical_experiment'].split('_')[0].replace('previousStudent', 'ganaav')
         identifier = f'blocked_{number:03}_{name}'
-        entry['config'] = f'configs/reruns/{identifier}.yaml'
+        entry['config'] = f'experiments/configs/reruns/{identifier}.yaml'
         write_json(ROOT / entry['config'], {'schema': 'autoqc_cnn_config_v1', 'experiment_id': identifier,
                    'status': 'blocked', 'blocked_reasons': entry['reasons'],
                    'historical_run': 'runs/'+entry['historical_experiment'],
@@ -213,23 +249,25 @@ def materialize_blocked_configs(entries, saved):
                    'unknown_setting_policy': 'do not fill from folder names or current defaults'})
 
 
-def prepare_diagnostic_configs(template, profile, output_dir='datasets'):
+def prepare_diagnostic_configs(template, profile, output_dir='data/datasets'):
     """Explicit smoke settings, never inferred settings for undocumented old runs."""
     from .utils import class_weights
     checks = [
         ('hard_ganaav', 'ganaav_labels.xlsx', 'hard_ce', False),
         ('hard_ganaav_weighted', 'ganaav_labels.xlsx', 'hard_ce', True),
         ('hard_shane', 'shane_labels.xlsx', 'hard_ce', False),
-        ('ceiling_mean', 'ganaav_shane_ceiling_labels.xlsx', 'hard_ce', False),
-        ('exact_pair_mean', 'ganaav_shane_mean_labels.xlsx', 'continuous_cdw_ce', False),
-        ('exact_multigrader_mean', 'multigrader_mean_labels.xlsx', 'continuous_cdw_ce', False),
-        ('soft_categorical', 'multigrader_soft_labels.xlsx', 'soft_ce', False),
-        ('soft_categorical_weighted', 'multigrader_soft_labels.xlsx', 'soft_ce', True),
+        ('ceiling_mean', 'shane_ganaav_average_rounded_labels.xlsx', 'hard_ce', False),
+        ('exact_pair_mean', 'shane_ganaav_average_labels.xlsx', 'continuous_cdw_ce', False),
+        ('exact_multigrader_mean', 'multigrader_labels.xlsx', 'continuous_cdw_ce', False),
+        ('soft_categorical', 'multigrader_labels.xlsx', 'soft_ce', False),
+        ('soft_categorical_weighted', 'multigrader_labels.xlsx', 'soft_ce', True),
     ]
     for name, filename, loss, weighted in checks:
         config = copy.deepcopy(template)
         dataset = ROOT / output_dir / profile['name'] / filename
-        frame, meta = load_workbook(dataset)
+        kind = ('exact_mean' if name.startswith('exact_') else 'soft_categorical' if name.startswith('soft_')
+                else 'ceiling_mean' if name == 'ceiling_mean' else 'hard_shane' if name == 'hard_shane' else 'hard_ganaav')
+        frame, meta = load_workbook(dataset, target_kind=kind)
         config.update(experiment_id='check_'+name, diagnostic_only=True,
                       historical={'classification': 'diagnostic only; settings borrowed explicitly from a ready template, not a recovered historical experiment'})
         config['model'] = {'head': 'five_logits', 'batch_normalization': False, 'output_sigmoid': False, 'dropout_p': .5,
@@ -253,7 +291,7 @@ def prepare_diagnostic_configs(template, profile, output_dir='datasets'):
         config['evaluation']['subsets'] = {}
         config['evaluation']['projection'] = 'none'
         config['selection'] = {'criterion': 'strict minimum configured primary patch validation loss', 'monitor': 'configured primary loss'}
-        destination = ROOT / f'configs/checks/{name}.yaml'
+        destination = ROOT / f'experiments/configs/checks/{name}.yaml'
         destination.parent.mkdir(exist_ok=True)
         write_json(destination, config)
 
@@ -285,7 +323,7 @@ def run_queue(mode, queue_path, resume=None):
                 seen.add(key)
         entries = selected
         # Hard-label and ceiling paths are new controlled comparisons, not recovered historical settings.
-        entries += [{'config': str(p.relative_to(ROOT))} for p in sorted((ROOT / 'configs/checks').glob('*.yaml'))]
+        entries += [{'config': str(p.relative_to(ROOT))} for p in sorted((ROOT / 'experiments/configs/checks').glob('*.yaml'))]
     directory = Path(resume).resolve() if resume else ROOT / 'model_dir' / ('queue_'+mode+'_'+datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f'))
     if resume:
         state = read_config(directory / 'queue_status.json')
@@ -314,6 +352,7 @@ def run_queue(mode, queue_path, resume=None):
             status = read_config(Path(completed['run']) / 'run_status.json')
             if status['status'] != 'completed' or not status['required_outputs_verified']:
                 raise ValueError('A previously completed queue entry no longer verifies')
+        state.update(status='running', owner_pid=os.getpid(), active=None)
     else:
         directory.mkdir(parents=True, exist_ok=False)
         state = {'status': 'running', 'mode': mode, 'owner_pid': os.getpid(), 'queue_sha256': sha256(queue_path), 'completed': [], 'remaining': [e['config'] for e in entries]}

@@ -19,7 +19,8 @@ class IQAnet(nn.Module):
         num_classes=2,
         batch_normalization=False,
         output_sigmoid=False,
-        dropout_p: float = 0.5
+        dropout_p: float = 0.5,
+        conv_layers: int = 2
     ):
         super(IQAnet, self).__init__()
         self.conv1 = nn.Conv2d(1, n_kers, ker_size, stride=3, padding=0)
@@ -40,6 +41,17 @@ class IQAnet(nn.Module):
         self.batch_normalization = batch_normalization
 
         self.dropout_p = dropout_p
+        if conv_layers not in (2, 4):
+            raise ValueError('IQAnet supports two or four convolutional layers')
+        self.conv_layers = conv_layers
+        if conv_layers == 4:
+            # Add depth at the existing feature-map resolution. Keep the original
+            # layers' initialization and subsequent dropout RNG unchanged.
+            with torch.random.fork_rng(devices=[]):
+                self.conv3 = nn.Conv2d(n_kers // 2, n_kers // 2, 3, padding=1)
+                self.conv4 = nn.Conv2d(n_kers // 2, n_kers // 2, 3, padding=1)
+                self.bn3 = nn.BatchNorm2d(n_kers // 2)
+                self.bn4 = nn.BatchNorm2d(n_kers // 2)
 
     def forward_features(self, x):
         x = x.view(-1, x.size(-3), x.size(-2), x.size(-1))
@@ -54,6 +66,16 @@ class IQAnet(nn.Module):
         if self.batch_normalization:
             h = self.bn2(h)
         h = F.relu(h)
+
+        if self.conv_layers == 4:
+            h = self.conv3(h)
+            if self.batch_normalization:
+                h = self.bn3(h)
+            h = F.relu(h)
+            h = self.conv4(h)
+            if self.batch_normalization:
+                h = self.bn4(h)
+            h = F.relu(h)
 
         # pool pos & neg
         h1 = F.max_pool2d(h, (h.size(-2), h.size(-1)))
@@ -132,6 +154,37 @@ class FrozenBinaryIQAnet(nn.Module):
         return ordinal, self.binary_head(features).squeeze(1)
 
 
+class ResNet18Quality(nn.Module):
+    """Torchvision ResNet-18 features with the existing quality-head definitions.
+
+    https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet18.html
+    Keep the original 256px grayscale patches; repeat channels and apply ImageNet
+    normalization inside the model so training and evaluation use the same input.
+    """
+    def __init__(self, head, dropout_p=.5, pretrained=True):
+        super().__init__()
+        from torchvision.models import ResNet18_Weights, resnet18
+        weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        self.backbone = resnet18(weights=weights)
+        features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Identity()
+        self.dropout = nn.Dropout(dropout_p)
+        self.head = head
+        self.fc3_d = (OrderedCoralHead(features) if head == 'coral'
+                      else nn.Linear(features, 5 if head == 'five_logits' else 4))
+        if head == 'or_soft_binary':
+            self.binary_head = nn.Linear(features, 1)
+        self.register_buffer('mean', torch.tensor([.485, .456, .406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([.229, .224, .225]).view(1, 3, 1, 1))
+
+    def forward(self, x):
+        if x.shape[1] == 1:
+            x = x.expand(-1, 3, -1, -1)
+        features = self.dropout(self.backbone((x - self.mean) / self.std))
+        grades = self.fc3_d(features)
+        return (grades, self.binary_head(features).squeeze(1)) if self.head == 'or_soft_binary' else grades
+
+
 def make_model(settings, seed=42, load_source=True):
     settings = dict(settings)
     head = settings.pop('head')
@@ -140,6 +193,16 @@ def make_model(settings, seed=42, load_source=True):
     source = settings.pop('source', None)
     if settings.get('output_sigmoid', False):
         raise ValueError('All supported objectives require raw logits')
+    backbone = settings.pop('backbone', 'iqanet')
+    pretrained = settings.pop('pretrained', False)
+    if backbone == 'resnet18':
+        if head not in ('five_logits', 'or_soft', 'coral', 'or_soft_binary'):
+            raise ValueError('ResNet-18 does not support frozen_binary')
+        return ResNet18Quality(head, settings.get('dropout_p', .5), pretrained and load_source)
+    if backbone not in ('iqanet', 'iqanet4'):
+        raise ValueError(f'Unknown backbone: {backbone}')
+    if backbone == 'iqanet4':
+        settings['conv_layers'] = 4
     if head == 'five_logits':
         return IQAnet(num_classes=5, **settings)
     if head == 'frozen_binary':

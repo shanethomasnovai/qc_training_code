@@ -1,0 +1,53 @@
+
+local_root: "C:/Users/Shane/Desktop/qc_data"
+experiment_name: iqanet4_tune_lr3e-5_seed42
+
+model:
+  backbone: iqanet4  # iqanet: 2 conv layers / iqanet4: 4 conv layers / resnet18
+  pretrained: false  # Set true for ImageNet-pretrained ResNet-18; false for IQAnet
+  # or_soft / coral: ordinal target, ordinal_bce loss (one ordinal head)
+  # or_soft_binary: ordinal target, joint_bce loss (ordinal + binary heads)
+  # five_logits: hard_ce, soft_ce or continuous_cdw_ce, depending on target below
+  head: or_soft_binary
+  dropout_p: 0.5
+  # IQAnet only, optional: batch_normalization: false
+
+data:
+  dataset: reviewed_v2/multigrader_labels.xlsx 
+  target: ordinal
+  input_mode: patches  # patches: nine 256px crops; whole_image: resize once to 256x256
+
+training:
+  seed: 42
+  epochs: 100
+  batch_size: 16  # Inputs per batch: patches or whole images
+  patience: 10
+  device: auto
+
+optimizer:
+  name: AdamW
+  lr: 0.00003
+  weight_decay: 0.05
+
+scheduler:
+  enabled: true
+  mode: min
+  factor: 0.5
+  patience: 2
+  min_lr: 0.00001
+  threshold: 0.001
+
+loss:
+  # ordinal_bce: head or_soft or coral; target ordinal
+  # joint_bce: head or_soft_binary; target ordinal; optional binary_loss_weight: 1.0
+  # hard_ce: head five_logits; target hard_ganaav, hard_shane or ceiling_mean
+  # soft_ce: head five_logits; target soft_categorical
+  # continuous_cdw_ce: head five_logits; target exact_mean; optional alpha: 1.0
+  name: joint_bce
+  binary_loss_weight: 1.0
+  # ordinal and CDW-CE losses require mode: none
+  class_weights:
+    mode: none
+
+evaluation:
+  enable_test: false

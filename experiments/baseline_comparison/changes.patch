@@ -7,7 +7,7 @@ diff --git a/auto_qc/CNN/collect_results.py b/auto_qc/CNN/collect_results.py
 new file mode 100644
 --- /dev/null
 +++ b/auto_qc/CNN/collect_results.py
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,192 @@
 +"""Collect completed reruns into one readable results folder, without moving runs."""
 +import argparse
 +import csv
@@ -19,18 +19,14 @@ new file mode 100644
 +import time
 +
 +ROOT = Path(__file__).resolve().parents[2]
++SUPPORT = ROOT / 'model_dir' / 'results_support'
++CURVE_STYLE = 'labelled_axes_v1'
 +FILES = {
 +    'checkpoint.pth': 'checkpoint.pth',
 +    'training_history.png': 'learning_curve.png',
-+    'training_history.csv': 'training_history.csv',
 +    'config.yaml': 'config.yaml',
-+    'dataset.xlsx': 'dataset.xlsx',
 +    'validation_predictions.csv': 'validation_predictions.csv',
 +    'validation_metrics.json': 'validation_metrics.json',
-+    'validation_confusion_matrix.png': 'validation_confusion_matrix.png',
-+    'validation_confusion_matrix.csv': 'validation_confusion_matrix.csv',
-+    'training.log': 'training.log',
-+    'run_status.json': 'run_status.json',
 +}
 +
 +
@@ -61,6 +57,24 @@ new file mode 100644
 +    return 'full_data' if len(config['cohort']['training_image_ids']) == 508 else 'cohort'
 +
 +
++def refresh_curve(source, destination, support, receipt, config, status):
++    """Render a review plot from the CSV; preserve the original run's PNG."""
++    derivation = {'style': CURVE_STYLE, 'source_file': 'training_history.csv',
++                  'source_sha256': digest(source / 'training_history.csv'),
++                  'original_plot_sha256': digest(source / 'training_history.png'),
++                  'selected_epoch': status['selected_epoch']}
++    if receipt.get('learning_curve') == derivation:
++        return
++    import pandas as pd
++    from .training import history_figure
++    history_figure(pd.read_csv(source / 'training_history.csv'), destination / 'learning_curve.png',
++                   config, status['selected_epoch'])
++    receipt['learning_curve'] = derivation
++    receipt['file_sha256']['learning_curve.png'] = digest(destination / 'learning_curve.png')
++    receipt['note'] = 'Verified copies; learning_curve.png rendered from the original epoch CSV; original run artifacts retained'
++    write_json(support / 'source_run.json', receipt)
++
++
 +def export_run(source, output):
 +    source = Path(source).resolve()
 +    status, config = read(source / 'run_status.json'), read(source / 'config.yaml')
@@ -70,20 +84,38 @@ new file mode 100644
 +    number = identifier.split('_')[1]
 +    label = f'{config["model"]["head"]}__{condition(config)}__seed{config["training"]["seed"]}__{number}_{source.name.split("_")[-1]}'
 +    destination = output / label
++    support = SUPPORT / label
++    support.mkdir(parents=True, exist_ok=True)
 +    if destination.exists():
-+        receipt = read(destination / 'source_run.json')
++        receipt_path = destination / 'source_run.json'
++        receipt = read(receipt_path if receipt_path.exists() else support / 'source_run.json')
 +        if receipt['source_run'] != str(source):
 +            raise FileExistsError(f'Result folder belongs to another run: {destination}')
 +        for filename, expected in receipt['file_sha256'].items():
-+            if digest(destination / filename) != expected or digest(source / receipt['source_files'][filename]) != expected:
++            collected = destination / filename
++            if not collected.exists():
++                collected = support / filename
++            if filename == 'learning_curve.png' and receipt.get('learning_curve'):
++                curve = receipt['learning_curve']
++                source_matches = (digest(source / curve['source_file']) == curve['source_sha256']
++                                  and digest(source / receipt['source_files'][filename]) == curve['original_plot_sha256'])
++            else:
++                source_matches = digest(source / receipt['source_files'][filename]) == expected
++            if digest(collected) != expected or not source_matches:
 +                raise ValueError(f'Collected result/source changed; refusing overwrite: {destination / filename}')
++        # Keep the five useful review files visible. Preserve older collected
++        # extras and their receipt with the supporting records under model_dir.
++        for extra in destination.iterdir():
++            if extra.name not in FILES.values():
++                archived = support / extra.name
++                if archived.exists():
++                    raise FileExistsError(f'Refusing to overwrite supporting file: {archived}')
++                extra.rename(archived)
 +    else:
 +        staging = output / ('.' + label + '.partial')
 +        staging.mkdir(exist_ok=False)
 +        hashes, sources = {}, {}
-+        selected = dict(FILES)
-+        selected.update({p.name: p.name for p in source.glob('validation_binary*_confusion_matrix.csv')})
-+        for original, target in selected.items():
++        for original, target in FILES.items():
 +            if not (source / original).is_file():
 +                raise FileNotFoundError(source / original)
 +            shutil.copy2(source / original, staging / target)
@@ -91,12 +123,14 @@ new file mode 100644
 +            if digest(staging / target) != hashes[target]:
 +                raise ValueError(f'Copy verification failed: {target}')
 +            sources[target] = original
-+        write_json(staging / 'source_run.json', {'source_run': str(source), 'experiment_id': identifier,
++        receipt = {'source_run': str(source), 'experiment_id': identifier,
 +                   'file_sha256': hashes, 'source_files': sources,
 +                   'collected_at_utc': datetime.now(timezone.utc).isoformat(),
-+                   'note': 'Verified copies of the completed experiment; original artifacts retained'})
++                   'note': 'Verified copies of the completed experiment; original artifacts retained'}
++        write_json(support / 'source_run.json', receipt)
 +        staging.rename(destination)
 +        print(f'Collected: {label}', flush=True)
++    refresh_curve(source, destination, support, receipt, config, status)
 +    metrics = read(destination / 'validation_metrics.json')
 +    profile = config['dataset'].get('profile')
 +    label_version = {'ratings_8cc903b74f9f': 'reviewed_v1', 'ratings_281f9fcc448e': 'reviewed_v2',
@@ -121,10 +155,11 @@ new file mode 100644
 +    if queue.get('mode') != 'run':
 +        raise ValueError('Collect the full-run queue, not diagnostic smoke runs')
 +    output.mkdir(parents=True, exist_ok=True)
++    SUPPORT.mkdir(parents=True, exist_ok=True)
 +    rows = [export_run(item['run'], output) for item in queue['completed']]
 +    summary_pending = False
 +    if rows:
-+        temporary = output / 'summary.csv.tmp'
++        temporary = SUPPORT / 'summary.csv.tmp'
 +        with temporary.open('w', newline='', encoding='utf-8') as handle:
 +            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
 +            writer.writeheader()
@@ -135,7 +170,7 @@ new file mode 100644
 +            # Excel can keep the CSV locked. Models still collect normally;
 +            # refresh the summary on a later pass after the file is released.
 +            summary_pending = True
-+    write_json(output / 'collection_status.json', {'source_queue': str(queue_status), 'queue_status': queue['status'],
++    write_json(SUPPORT / 'collection_status.json', {'source_queue': str(queue_status), 'queue_status': queue['status'],
 +               'completed_models_collected': len(rows), 'remaining_including_active': len(queue['remaining']),
 +               'summary_update_pending': summary_pending,
 +               'updated_at_utc': datetime.now(timezone.utc).isoformat()})
@@ -168,184 +203,29 @@ new file mode 100644
 diff --git a/auto_qc/CNN/dataset.py b/auto_qc/CNN/dataset.py
 --- a/auto_qc/CNN/dataset.py
 +++ b/auto_qc/CNN/dataset.py
-@@ -1,401 +1,192 @@
-+"""Image-level workbook records and the original 3x3 IQAnet patch extraction."""
-+from functools import lru_cache
-+import hashlib
-+import json
-+from pathlib import Path
- 
+@@ -1,10 +1,11 @@
+-
 -import argparse
++"""Original image loader and patch functions, with a lazy adapter for current runs."""
++from functools import lru_cache
++from pathlib import Path
++
  import numpy as np
 -import os
  import pandas as pd
  from PIL import Image
 -from sklearn.model_selection import train_test_split
++
  import torch
  from torch.utils.data import Dataset
  from torchvision import transforms
--from torchvision.transforms import ToPILImage
-+
-+VOTES = [f'target_grade_{k}' for k in range(1, 6)]
-+ORDINAL = [f'target_above_grade_{k}' for k in range(1, 5)]
-+KINDS = ('hard_ganaav', 'hard_shane', 'ceiling_mean', 'exact_mean', 'soft_categorical', 'ordinal')
-+
-+
-+def image_key(value):
-+    text = str(value).strip().replace('\\', '/')
-+    path = Path(text)
-+    return path.stem if path.suffix.lower() in ('.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp') else path.name
-+
-+
-+def canonical_graders(columns):
-+    return ['ganaav_grade' if c == 'previousStudent_grade' else c for c in columns]
-+
-+
-+def canonical_columns(frame):
-+    frame = frame.copy()
-+    if 'previousStudent_grade' in frame:
-+        if 'ganaav_grade' in frame and not np.allclose(pd.to_numeric(frame.ganaav_grade, errors='coerce'),
-+                pd.to_numeric(frame.previousStudent_grade, errors='coerce'), equal_nan=True):
-+            raise ValueError('Conflicting ganaav / previousStudent aliases')
-+        frame = frame.rename(columns={'previousStudent_grade': 'ganaav_grade'}) if 'ganaav_grade' not in frame else frame.drop(columns='previousStudent_grade')
-+    if 'split' not in frame and 'mode' in frame:
-+        frame['split'] = frame['mode']
-+    if 'split' in frame:
-+        frame['split'] = frame['split'].replace({'val': 'validation'})
-+        frame['mode'] = frame['split'].replace({'validation': 'val'})
-+    return frame
-+
-+
-+def ratings_array(frame, graders):
-+    graders = canonical_graders(graders)
-+    if not graders or len(set(graders)) != len(graders) or not set(graders).issubset(frame.columns):
-+        raise ValueError('Select unique existing grader columns')
-+    arrays = []
-+    for name in graders:
-+        raw = frame[name]
-+        missing = raw.isna() | raw.astype(str).str.strip().eq('')
-+        values = pd.to_numeric(raw.where(~missing), errors='coerce')
-+        invalid = ~missing & (~values.isin(range(1, 6)) | raw.map(lambda v: isinstance(v, (bool, np.bool_))))
-+        if invalid.any():
-+            raise ValueError(f'Invalid integer 1..5 rating in {name}: {frame.loc[invalid, "image_id"].tolist()[:5]}')
-+        arrays.append(values.to_numpy(dtype=float))
-+    return np.stack(arrays, axis=1)
-+
-+
-+def generate_targets(frame, kind, graders, mean_missing_policy='require_all'):
-+    if kind not in KINDS:
-+        raise ValueError(f'Unsupported target kind: {kind}')
-+    result = canonical_columns(frame)
-+    graders = canonical_graders(graders)
-+    ratings = ratings_array(result, graders)
-+    counts = np.isfinite(ratings).sum(1)
-+    votes = np.stack([(ratings == k).sum(1) for k in range(1, 6)], axis=1)
-+    votes = np.divide(votes, counts[:, None], out=np.full_like(votes, np.nan, dtype=float), where=counts[:, None] > 0)
-+    result[VOTES] = votes
-+    result[ORDINAL] = np.stack([votes[:, k:].sum(1) for k in range(1, 5)], axis=1)
-+    result['target_binary_unacceptable'] = result[ORDINAL[1]]
-+    result['rating_count'] = counts
-+    result['eligible'] = counts > 0
-+    if kind in ('ceiling_mean', 'exact_mean'):
-+        if mean_missing_policy not in ('require_all', 'available'):
-+            raise ValueError('Explicit mean missing-rating policy required')
-+        result['eligible'] = counts == len(graders) if mean_missing_policy == 'require_all' else counts > 0
-+        mean = np.divide(np.nansum(ratings, axis=1), counts, out=np.full(len(frame), np.nan), where=counts > 0)
-+        result['target_mean_grade'] = mean
-+        if kind == 'ceiling_mean':
-+            result['target_grade'] = np.ceil(mean)
-+    elif kind in ('hard_ganaav', 'hard_shane'):
-+        if graders != (['ganaav_grade'] if kind == 'hard_ganaav' else ['shane_grade']):
-+            raise ValueError('Hard target grader does not match kind')
-+        result['target_grade'] = ratings[:, 0]
-+    if 'target_grade' in result:
-+        result['target_class_index'] = result.target_grade - 1
-+        result['image_grading'] = result.target_grade
-+    elif kind == 'exact_mean':
-+        result['image_grading'] = result.target_mean_grade
-+    result['target_kind'] = kind
-+    result['exclusion_reason'] = np.where(result.eligible, '', 'missing required selected ratings')
-+    target_names = VOTES + ORDINAL + ['target_binary_unacceptable', 'target_mean_grade', 'target_grade', 'target_class_index']
-+    for name in set(target_names) & set(result):
-+        result.loc[~result.eligible, name] = np.nan
-+    return result
-+
-+
-+def validate_records(frame, check_files=False, held_out='VISUS-NHP'):
-+    required = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
-+    if frame.empty or not set(required).issubset(frame):
-+        raise ValueError('Explicit image/patient/project/site/split records required before patching')
-+    if frame[required].isna().any().any() or frame[required].astype(str).apply(lambda c: c.str.strip().eq('')).any().any():
-+        raise ValueError('Empty identity / split metadata')
-+    if frame.image_id.duplicated().any() or frame.image_path.map(lambda p: str(Path(p).resolve()).casefold()).duplicated().any():
-+        raise ValueError('Duplicate image ID or path')
-+    if not frame.image_id.eq(frame.image_path.map(image_key)).all():
-+        raise ValueError('Image ID/path mismatch; preserve full variant suffixes')
-+    if not frame.split.isin(('train', 'validation', 'test')).all() or frame.groupby('patient_id').split.nunique().gt(1).any():
-+        raise ValueError('Invalid split or patient overlap')
-+    if not frame.patient_id.eq(frame.image_id.str.split('_').str[:3].str.join('_')).all():
-+        raise ValueError('Patient identity differs from original filename crosswalk')
-+    if held_out and frame.loc[frame.project.eq(held_out), 'split'].ne('test').any():
-+        raise ValueError(f'{held_out} must remain held out')
-+    if check_files and not frame.image_path.map(lambda p: Path(p).is_file()).all():
-+        raise FileNotFoundError('Missing image paths')
-+
-+
-+def logical_hash(frame):
-+    data = frame.sort_values('image_id').sort_index(axis=1).copy()
-+    for name in data.select_dtypes(include='number'):
-+        data[name] = data[name].astype(float)
-+    return hashlib.sha256(data.to_json(orient='split', index=False, double_precision=15).encode()).hexdigest()
-+
-+
-+def save_workbook(path, frame, metadata):
-+    path = Path(path)
-+    if path.exists():
-+        raise FileExistsError(path)
-+    metadata = dict(metadata, logical_content_sha256=logical_hash(frame))
-+    with pd.ExcelWriter(path, engine='openpyxl') as writer:
-+        frame.to_excel(writer, index=False, sheet_name='dataset')
-+        pd.DataFrame({'key': list(metadata), 'value': [json.dumps(v, allow_nan=False) for v in metadata.values()]}).to_excel(writer, index=False, sheet_name='metadata')
-+
-+
-+def load_workbook(path, check_files=False):
-+    frame = canonical_columns(pd.read_excel(path, sheet_name='dataset')).fillna({'exclusion_reason': ''})
-+    values = pd.read_excel(path, sheet_name='metadata')
-+    metadata = {row.key: json.loads(row.value) for row in values.itertuples()}
-+    validate_records(frame, check_files, metadata.get('held_out_project'))
-+    expected = generate_targets(frame.drop(columns=[c for c in frame if c.startswith('target_')] + ['image_grading'], errors='ignore'),
-+                                metadata['target_kind'], metadata['graders'], metadata.get('mean_missing_policy', 'require_all'))
-+    for name in [c for c in expected if c.startswith('target_') and c != 'target_kind'] + ['rating_count', 'eligible']:
-+        if name not in frame or not np.allclose(pd.to_numeric(frame[name]), pd.to_numeric(expected[name]), rtol=0, atol=1e-12, equal_nan=True):
-+            raise ValueError(f'Workbook consumed target disagrees with source ratings: {name}')
-+    if logical_hash(frame.fillna({'exclusion_reason': ''})) != metadata['logical_content_sha256']:
-+        raise ValueError('Workbook logical content hash mismatch')
-+    return frame, metadata
-+
-+
-+def target_tensor(frame, kind):
-+    if kind in ('hard_ganaav', 'hard_shane', 'ceiling_mean'):
-+        return torch.tensor(frame.target_class_index.to_numpy(dtype=np.int64), dtype=torch.long)
-+    columns = ORDINAL if kind == 'ordinal' else VOTES if kind == 'soft_categorical' else ['target_mean_grade']
-+    values = torch.tensor(frame[columns].to_numpy(dtype=np.float32))
-+    return values.squeeze(1) if kind == 'exact_mean' else values
-+
-+
-+def image_transform():
-+    return transforms.Compose([transforms.Resize((768, 768)), transforms.Grayscale(num_output_channels=1), transforms.ToTensor()])
-+
-+
-+def extract_patches(path):
-+    # Keep original Resize -> Grayscale -> Tensor -> PIL -> grid-crop sequence.
-+    with Image.open(path) as image:
-+        tensor = image_transform()(image)
-+    pil = transforms.ToPILImage()(tensor)
-+    return torch.stack([transforms.ToTensor()(pil.crop((c*256, r*256, (c+1)*256, (r+1)*256))) for r in range(3) for c in range(3)])
+@@ -12,41 +13,29 @@
  
  
  class ImageQualityDataset(Dataset):
 -    def __init__(self, data, transform=None, label_mapping=None, base_image_dir=None):
--        self.transform = transform
++    def __init__(self, data, transform=None, label_mapping=None):
+         self.transform = transform
 -        self.data = [pd.read_csv(data) if isinstance(data, str) else data][0]
 -        if label_mapping is not None:
 -            self.label_mapping = label_mapping
@@ -360,28 +240,22 @@ diff --git a/auto_qc/CNN/dataset.py b/auto_qc/CNN/dataset.py
 -            self.label_mapping = {'Good': 0, 'Bad': 1}
 -        else:
 -            self.label_mapping = {label: idx for idx, label in enumerate(sorted(unique_labels))}
-+    """Already split image records exposed as patches, then appended training flips."""
-+    def __init__(self, frame, kind, augment=False):
-+        self.frame = frame.reset_index(drop=True)
-+        self.targets = target_tensor(self.frame, kind)
-+        self.augment = augment
-+        self.base_length = len(frame) * 9
-+        if frame.empty or frame.split.nunique() != 1 or not frame.eligible.all():
-+            raise ValueError('Supply one nonempty eligible split before extracting patches')
++        self.data = pd.read_csv(data) if isinstance(data, (str, Path)) else data
++        self.data = self.data.reset_index(drop=True)
++        self.label_mapping = label_mapping
++        # Accept the pasted original columns and the archived branch's names.
++        self.image_column = 'Image' if 'Image' in self.data else 'image_filename'
++        self.label_column = 'Quality' if 'Quality' in self.data else 'image_grading'
  
      def __len__(self):
--        return len(self.data)
-+        return self.base_length * (2 if self.augment else 1)
+         return len(self.data)
  
--    def __getitem__(self, idx):
+     def __getitem__(self, idx):
 -        image_path = self.data.loc[idx, 'image_filename']
 -        if self.base_image_dir:
 -            image_path = os.path.join(self.base_image_dir, image_path)
 -        quality = self.data.loc[idx, 'image_grading']
-+    @lru_cache(maxsize=32)
-+    def patches(self, image_index):
-+        return extract_patches(self.frame.iloc[image_index].image_path)
- 
+-
 -        image = Image.open(image_path)
 -
 -        if self.transform:
@@ -391,146 +265,72 @@ diff --git a/auto_qc/CNN/dataset.py b/auto_qc/CNN/dataset.py
 -        quality = self.label_mapping[quality]
 -
 -        return image, torch.tensor(quality, dtype=torch.long)
--
--
--def patch_dataset(dataset):
--    '''Extract patches from a dataset of images.
--
--    Args:
--        dataset (torch.utils.data.Dataset): dataset of images
--
--    Returns:
--        list: list of tuples containing subimages and labels
--    '''
--
--    transformed_data = []
--
--    for i in range(len(dataset)):
--
--        image, label = dataset[i]
--
--        # Calculate patch size
--        _, height, width = image.size()
--        sub_image_width = width // 2
--        sub_image_height = height // 2
--
--        # Reshape the image tensor using unfold
--        unfolded = torch.nn.functional.unfold(
--            image,
--            (sub_image_height, sub_image_width),
--            stride=(sub_image_height, sub_image_width)
--            )
--
--        # Reshape the unfolded tensor to get sub-images
--        num_patches = unfolded.shape[1]
++        image_path = self.data.loc[idx, self.image_column]
++        quality = self.data.loc[idx, self.label_column]
++
++        with Image.open(image_path) as source:
++            image = self.transform(source) if self.transform else source.copy()
++
++        if self.label_mapping:
++            quality = self.label_mapping[quality]
++
++        return image, quality
+ 
+ 
+ def patch_dataset(dataset):
+@@ -79,7 +68,9 @@
+ 
+         # Reshape the unfolded tensor to get sub-images
+         num_patches = unfolded.shape[1]
 -        sub_images = unfolded.view(-1, 1, sub_image_height, sub_image_width)
--
--        # Duplicate labels for each sub-image
--        labels = [label] * num_patches
--
--        # Append sub-images and labels to the transformed data
--        transformed_data.extend(zip(sub_images, labels))
--
--    return transformed_data
--
--
--def subsample_subimages(
--        dataset,
--        method='+',
--        patch_size=256,
--        df=None,
--        class_labels=True,
++        # Unfold stores patches as columns; transpose before reshaping.
++        sub_images = unfolded.transpose(0, 1).reshape(
++            num_patches, image.size(0), sub_image_height, sub_image_width)
+ 
+         # Duplicate labels for each sub-image
+         labels = [label] * num_patches
+@@ -96,7 +87,8 @@
+         patch_size=256,
+         df=None,
+         class_labels=True,
 -        grid_size=3
--        ):
--
--    '''Subsample subimages from a dataset of images.
--
--    Args:
--        dataset (torch.utils.data.Dataset): dataset of images
--        method (str): Subsample method. Options are '+', 'x', 'all'
--        patch_size (int): size of subimages
--        df (pandas.DataFrame): dataframe containing image paths and labels
--        class_labels (bool): whether dataset contains labels
--        grid_size (int): size of grid to subsample subimages from
--
--    Returns:
--        list: list of tuples containing subimages and labels
--        pandas.DataFrame: Image paths, labels, and subimage positions
--    '''
--
--    # Define the positions of the subimages in the 3x3 grid
--    if method == '+':
--        subimage_positions = [2, 4, 6, 8]
--    elif method == 'x':
--        subimage_positions = [1, 3, 5, 7, 9]
--    elif method == 'all':
--        subimage_positions = [1, 2, 3, 4, 5, 6, 7, 8, 9]
--
--    num_patches = len(subimage_positions)
--
--    # Define the transformation to extract subimages
--    crop_transform = transforms.Compose([
--        transforms.ToTensor(),
--    ])
--
--    n_samples = len(dataset)
--
--    has_mode = df is not None and 'mode' in df.columns
--
--    transformed_data = []
--    for i in range(len(dataset)):
--
++        grid_size=3,
++        verbose=True
+         ):
+ 
+     '''Subsample subimages from a dataset of images.
+@@ -121,6 +113,8 @@
+         subimage_positions = [1, 3, 5, 7, 9]
+     elif method == 'all':
+         subimage_positions = [1, 2, 3, 4, 5, 6, 7, 8, 9]
++    else:
++        raise ValueError(f'Unknown patch method: {method}')
+ 
+     num_patches = len(subimage_positions)
+ 
+@@ -136,7 +130,8 @@
+     transformed_data = []
+     for i in range(len(dataset)):
+ 
 -        print(f' {i+1}/{n_samples}', end='\r')
--
--        if class_labels:
--            image, label = dataset[i]
--        else:
--            image = dataset[i]
--        
--        if has_mode:
--            mode = df.loc[i, 'mode']
--
--        subimages = []
--        for position in subimage_positions:
--            # Calculate the row and column indices of the subimage position
--            left = ((position - 1) % grid_size) * patch_size
--            top = ((position - 1) // grid_size) * patch_size
--            right = left + patch_size
--            bottom = top + patch_size
--
--            # Crop and transform the subimage
--            subimage = crop_transform(ToPILImage()(image)
--                                      .crop((left, top, right, bottom)))
--            subimages.append(subimage)
--
--        # Append sub-images and labels (and mode) to the transformed data
--        if class_labels:
--            labels = [label] * num_patches
--            if has_mode:
--                modes = [mode] * num_patches
--                transformed_data.extend(zip(subimages, labels, modes))
--            else:
--                transformed_data.extend(zip(subimages, labels))
--        else:
++        if verbose:
++            print(f' {i+1}/{n_samples}', end='\r')
+ 
+         if class_labels:
+             image, label = dataset[i]
+@@ -168,7 +163,7 @@
+             else:
+                 transformed_data.extend(zip(subimages, labels))
+         else:
 -            transformed_data = subimages
--
--    if df is not None:
--        n = len(df)
--        # duplicate rows len(subimage_positions) times
--        df = df.loc[df.index.repeat(len(subimage_positions))] \
--            .reset_index(drop=True)
--        # add subimage positions
--        df['subimage_position'] = subimage_positions * n
--
--    else:
--        df = pd.DataFrame(
--            {
--                'subimage_position': subimage_positions * n_samples
--            }
--        )
--
--    return transformed_data, df
--
++            transformed_data.extend(subimages)
+ 
+     if df is not None:
+         n = len(df)
+@@ -187,215 +182,52 @@
+ 
+     return transformed_data, df
+ 
 -
 -# Creating data splits
 -def create_split(df, seed):
@@ -743,165 +543,114 @@ diff --git a/auto_qc/CNN/dataset.py b/auto_qc/CNN/dataset.py
 -        max_attempts=100,
 -        seed=args.start_seed
 -    )
++# Current experiments supply precomputed scalar or vector targets.
++VOTES = [f'target_grade_{k}' for k in range(1, 6)]
++ORDINAL = [f'target_above_grade_{k}' for k in range(1, 5)]
++
++
++def target_tensor(frame, kind):
++    if kind in ('hard_ganaav', 'hard_shane', 'ceiling_mean'):
++        return torch.tensor(frame.target_class_index.to_numpy(dtype=np.int64), dtype=torch.long)
++    columns = ORDINAL if kind == 'ordinal' else VOTES if kind == 'soft_categorical' else ['target_mean_grade']
++    values = torch.tensor(frame[columns].to_numpy(dtype=np.float32))
++    return values.squeeze(1) if kind == 'exact_mean' else values
++
++
++def image_transform():
++    return transforms.Compose([transforms.Resize((768, 768)), transforms.Grayscale(num_output_channels=1), transforms.ToTensor()])
++
++
++def extract_patches(path):
++    with Image.open(path) as image:
++        tensor = image_transform()(image)
++    patches, _ = subsample_subimages([tensor], method='all', class_labels=False, verbose=False)
++    return torch.stack(patches)
++
++
++class ImagePatchDataset(Dataset):
++    """Use the original loader/crops lazily, keeping existing patch and flip order."""
++    def __init__(self, frame, kind, augment=False):
++        self.frame = frame.reset_index(drop=True)
++        self.targets = target_tensor(self.frame, kind)
++        self.augment = augment
++        self.base_length = len(frame) * 9
++        if frame.empty or frame.split.nunique() != 1 or not frame.eligible.all():
++            raise ValueError('Supply one nonempty eligible split before extracting patches')
++        data = self.frame.assign(Image=self.frame.image_path, Quality=list(self.targets))
++        self.images = ImageQualityDataset(data, transform=image_transform())
++
++    def __len__(self):
++        return self.base_length * (2 if self.augment else 1)
++
++    @lru_cache(maxsize=32)
++    def patches(self, image_index):
++        patches, _ = subsample_subimages([self.images[image_index]], method='all', verbose=False)
++        return torch.stack([image for image, _ in patches])
++
 +    def __getitem__(self, index):
 +        flipped = index >= self.base_length
 +        image_index, patch = divmod(index % self.base_length, 9)
 +        value = self.patches(image_index)[patch]
 +        return (value.flip(-1) if flipped else value), self.targets[image_index]
-diff --git a/auto_qc/CNN/generate_datasets.py b/auto_qc/CNN/generate_datasets.py
+diff --git a/auto_qc/CNN/finish_pruned_queue.py b/auto_qc/CNN/finish_pruned_queue.py
 new file mode 100644
 --- /dev/null
-+++ b/auto_qc/CNN/generate_datasets.py
-@@ -0,0 +1,153 @@
-+"""Generate all target workbooks from hash-pinned ratings and one saved split."""
++++ b/auto_qc/CNN/finish_pruned_queue.py
+@@ -0,0 +1,58 @@
++"""Record an intentional queue cutoff after a legacy worker reaches its guard.
++
++This monitor never starts or stops training. A worker that cached its queue before
++the user narrowed its scope rejects the first deferred config during preflight.
++Only that specific, expected rejection is recorded as completion with skips.
++Other failures remain failures.
++"""
 +import argparse
++import copy
++from datetime import datetime, timezone
++import json
 +from pathlib import Path
-+import shutil
++import time
 +
-+import numpy as np
-+import pandas as pd
-+
-+from .dataset import (canonical_columns, canonical_graders, generate_targets, image_key,
-+                      logical_hash, ratings_array, save_workbook, load_workbook, validate_records)
-+from .utils import ROOT, read_config, sha256, write_json
-+
-+VARIANTS = {
-+    'ganaav_labels.xlsx': ('hard_ganaav', ['ganaav_grade']),
-+    'shane_labels.xlsx': ('hard_shane', ['shane_grade']),
-+    'ganaav_shane_ceiling_labels.xlsx': ('ceiling_mean', ['ganaav_grade', 'shane_grade']),
-+    'ganaav_shane_mean_labels.xlsx': ('exact_mean', ['ganaav_grade', 'shane_grade']),
-+    'ganaav_shane_soft_labels.xlsx': ('soft_categorical', ['ganaav_grade', 'shane_grade']),
-+    'multigrader_soft_labels.xlsx': ('soft_categorical', None),
-+    'multigrader_mean_labels.xlsx': ('exact_mean', None),
-+    'ordinal_targets.xlsx': ('ordinal', None),
-+}
-+RULES = {
-+    'hard_ganaav': 'ganaav integer grade; class_index=grade-1',
-+    'hard_shane': 'shane integer grade; class_index=grade-1',
-+    'ceiling_mean': 'ceil(arithmetic mean), all selected ratings required',
-+    'exact_mean': 'exact arithmetic mean; paired mean requires both, historical multigrader mean ignores missing',
-+    'soft_categorical': 'fraction of available selected votes for each grade 1..5; equal image weight',
-+    'ordinal': 'P(grade>1),P(grade>2),P(grade>3),P(grade>4); available selected votes only',
-+}
++MARKER = 'USER_DEFERRED_EARLY_RERUN'
 +
 +
-+def pinned_table(spec, excel=False):
-+    path = ROOT / spec['path']
-+    if sha256(path) != spec['sha256']:
-+        raise ValueError(f'Input hash mismatch: {path}')
-+    table = pd.read_excel(path, sheet_name=spec.get('sheet', 'Grades')) if excel else pd.read_csv(path)
-+    table = canonical_columns(table)
-+    if 'image_id' not in table:
-+        table['image_id'] = table.image_filename.map(image_key)
-+    if table.image_id.isna().any() or table.image_id.eq('').any() or table.image_id.duplicated().any():
-+        raise ValueError(f'Duplicate/missing full IDs in {path}')
-+    return table
-+
-+
-+def join_sources(build, profile):
-+    split = pinned_table(build['split'])
-+    # Only assignment/identity columns, never the carrier manifest's rating values.
-+    fields = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
-+    result = split[fields].sort_values('image_id').reset_index(drop=True)
-+    ganaav = pinned_table(build['ganaav'])
-+    shane = pinned_table(build['shane'])
-+    allowed = set(build['allowed_unmatched_ids'])
-+    exclusions = []
-+    for name, source in [('ganaav', ganaav), ('shane', shane)]:
-+        unknown = set(source.image_id) - set(result.image_id)
-+        if unknown - allowed:
-+            raise ValueError(f'Unapproved unmatched {name} IDs: {sorted(unknown-allowed)}')
-+        exclusions += [{'source': name, 'image_id': value, 'reason': 'outside fixed paired population'} for value in sorted(unknown)]
-+        aligned = source.set_index('image_id').reindex(result.image_id)
-+        for field in ('patient_id', 'project', 'project_site'):
-+            if field in aligned:
-+                supplied = aligned[field].notna()
-+                if (supplied.to_numpy() & aligned[field].ne(result[field].to_numpy()).to_numpy()).any():
-+                    raise ValueError(f'{name} metadata conflict: {field}')
-+        result[name+'_grade'] = aligned.image_grading.to_numpy()
-+        result[name+'_original_grade'] = aligned.image_grading.to_numpy()
-+        result[name+'_source_filename'] = aligned.image_filename.to_numpy()
-+    changes = []
-+    snapshot = pinned_table(profile['ratings'], excel=True)
-+    unknown = set(snapshot.image_id)-set(result.image_id)
-+    if unknown - allowed:
-+        raise ValueError('Unapproved unmatched rating snapshot IDs')
-+    aligned = snapshot.set_index('image_id').reindex(result.image_id)
-+    if not np.allclose(pd.to_numeric(aligned.ganaav_grade), result.ganaav_grade, equal_nan=True):
-+        raise ValueError('Historical ganaav ratings disagree with original source')
-+    for name in canonical_graders(profile['graders']):
-+        values = pd.to_numeric(aligned[name], errors='raise').to_numpy(dtype=float)
-+        if name == 'shane_grade':
-+            changed = ~np.isclose(result.shane_grade, values, equal_nan=True)
-+            changes = [{'image_id': result.iloc[i].image_id, 'original': float(result.iloc[i].shane_grade),
-+                        'selected': float(values[i]), 'split': result.iloc[i].split} for i in np.flatnonzero(changed)]
-+        result[name] = values
-+    if len(changes) != profile['expected_shane_changes']:
-+        raise ValueError('Selected rating-version change count differs')
-+    ratings_array(result, profile['graders'])
-+    result['image_filename'] = result.image_path
-+    result = canonical_columns(result)
-+    validate_records(result, check_files=True)
-+    return result, exclusions, changes
-+
-+
-+def build_datasets(config_path, verify_existing=False, output_dir=None):
-+    build = read_config(config_path)
-+    if output_dir is not None:
-+        build['output_dir'] = str(output_dir)
-+    code = ROOT / build['output_dir'] / build['profiles'][0]['name'] / '_generation_code'
-+    if not verify_existing:
-+        for profile in build['profiles']:
-+            directory = ROOT / build['output_dir'] / profile['name']
-+            if directory.exists():
-+                raise FileExistsError(directory)
-+        code.mkdir(parents=True, exist_ok=False)
-+        for name in ('dataset.py', 'generate_datasets.py', 'utils.py'):
-+            shutil.copyfile(Path(__file__).with_name(name), code / name)
-+    summary = []
-+    for profile in build['profiles']:
-+        directory = ROOT / build['output_dir'] / profile['name']
-+        frame, exclusions, changes = join_sources(build, profile)
-+        directory.mkdir(parents=True, exist_ok=True)
-+        for filename, (kind, selected) in VARIANTS.items():
-+            graders = canonical_graders(selected or profile['graders'])
-+            dataset = generate_targets(frame, kind, graders, 'available' if selected is None else 'require_all')
-+            metadata = {'schema': 'autoqc_dataset_v1', 'target_kind': kind, 'graders': graders,
-+                        'mean_missing_policy': 'available' if selected is None else 'require_all',
-+                        'label_rule': RULES[kind], 'grade_order': [1, 2, 3, 4, 5],
-+                        'ganaav_identity': 'confirmed by project owner; previousStudent is the historical alias',
-+                        'shane_source_authority': build['shane_authority'], 'rating_profile': profile['name'],
-+                        'sources': {key: build[key] for key in ('ganaav', 'shane', 'split')},
-+                        'selected_rating_snapshot': profile['ratings'], 'review_changes': changes,
-+                        'held_out_project': 'VISUS-NHP', 'source_exclusions': exclusions,
-+                        'generation_code_snapshot': str(code),
-+                        'generator_sha256': sha256(__file__), 'dataset_module_sha256': sha256(Path(__file__).with_name('dataset.py'))}
-+            path = directory / filename
-+            if verify_existing and path.exists():
-+                saved, _ = load_workbook(path)
-+                if logical_hash(saved.fillna({'exclusion_reason': ''})) != logical_hash(dataset):
-+                    raise ValueError(f'Regeneration differs: {path}')
-+            else:
-+                save_workbook(path, dataset, metadata)
-+                load_workbook(path, check_files=True)
-+            summary.append({'path': str(path.relative_to(ROOT)), 'images': len(dataset), 'eligible': int(dataset.eligible.sum()),
-+                            'logical_sha256': logical_hash(dataset), 'file_sha256': sha256(path)})
-+        if not verify_existing:
-+            pd.DataFrame(exclusions).to_csv(directory / 'exclusions.csv', index=False)
-+            pd.DataFrame(changes, columns=['image_id', 'original', 'selected', 'split']).to_csv(directory / 'rating_changes.csv', index=False)
-+    if not verify_existing:
-+        write_json(ROOT / build['output_dir'] / 'build_results.json', summary)
-+    print(f'{len(summary)} workbooks {"verified" if verify_existing else "generated"}; no splits regenerated')
-+    return summary
++def finish_state(queue, state):
++    deferred = {entry['config']: entry for entry in queue['entries']
++                if entry['status'] == 'deferred_by_user'}
++    if (state['status'] != 'failed' or MARKER not in state.get('error', '')
++            or state.get('active') not in deferred
++            or not state['remaining']
++            or not set(state['remaining']).issubset(deferred)):
++        raise ValueError('Not the expected deferred-only queue cutoff; leaving status unchanged')
++    result = copy.deepcopy(state)
++    result['skipped'] = result.get('skipped', []) + [
++        {'config': path, 'reason': deferred[path]['reasons']} for path in result['remaining']]
++    result['intentional_stop_detail'] = {
++        'error': result.pop('error'), 'traceback': result.pop('traceback', None),
++        'note': 'User excluded older exploratory reruns; no deferred experiment trained.'}
++    result.update(status='completed', active=None, remaining=[],
++                  scope_completed_at_utc=datetime.now(timezone.utc).isoformat())
++    return result
 +
 +
 +def main():
 +    parser = argparse.ArgumentParser(description=__doc__)
-+    parser.add_argument('--config', type=Path, default=Path('configs/datasets.yaml'))
-+    parser.add_argument('--verify-existing', action='store_true')
-+    parser.add_argument('--output-dir', type=Path, help='New output directory; never overwrites an existing build')
++    parser.add_argument('--queue', type=Path, required=True)
++    parser.add_argument('--queue-status', type=Path, required=True)
 +    args = parser.parse_args()
-+    build_datasets(args.config, args.verify_existing, args.output_dir)
++    while True:
++        state = json.loads(args.queue_status.read_text(encoding='utf-8'))
++        if state['status'] != 'running':
++            break
++        time.sleep(30)
++    if state['status'] == 'completed':
++        return
++    queue = json.loads(args.queue.read_text(encoding='utf-8'))
++    result = finish_state(queue, state)
++    temporary = args.queue_status.with_suffix('.pruned.tmp')
++    temporary.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
++    temporary.replace(args.queue_status)
++    print(f"Selected scope completed; {len(result['skipped'])} older reruns skipped.", flush=True)
 +
 +
 +if __name__ == '__main__':
@@ -1313,7 +1062,7 @@ new file mode 100644
 --- /dev/null
 +++ b/auto_qc/CNN/metrics.py
 @@ -0,0 +1,280 @@
-+from .dataset import generate_targets
++from datasets.generate_datasets import generate_targets
 +
 +"""Evaluation only: grades 1-2 acceptable, grades 3-5 unacceptable (positive).
 +
@@ -1698,7 +1447,7 @@ diff --git a/auto_qc/CNN/rerun.py b/auto_qc/CNN/rerun.py
 new file mode 100644
 --- /dev/null
 +++ b/auto_qc/CNN/rerun.py
-@@ -0,0 +1,354 @@
+@@ -0,0 +1,356 @@
 +"""Prepare verified historical configurations, check them, and run a fail-fast queue."""
 +import argparse
 +import copy
@@ -1713,8 +1462,7 @@ new file mode 100644
 +import numpy as np
 +import pandas as pd
 +
-+from .dataset import canonical_graders, load_workbook
-+from .generate_datasets import build_datasets
++from datasets.generate_datasets import build_datasets, canonical_graders, load_workbook
 +from .training import preflight, train
 +from .utils import ROOT, read_config, sha256, write_json
 +
@@ -1743,27 +1491,20 @@ new file mode 100644
 +    for digest in hashes:
 +        if digest not in snapshots:
 +            continue
-+        snapshot = pd.read_excel(snapshots[digest], sheet_name='Grades')
-+        raw = pd.read_csv(ROOT / 'data/shane-image-file-listing.csv')
-+        raw['image_id'] = raw.image_filename.map(lambda p: Path(str(p).replace('\\', '/')).stem)
-+        aligned = snapshot.set_index('image_id').loc[raw.image_id]
-+        changes = int((aligned.shane_grade.to_numpy() != raw.image_grading.to_numpy()).sum())
 +        profiles.append({'name': 'ratings_'+digest[:12], 'ratings': {'path': relative(snapshots[digest]), 'sha256': digest, 'sheet': 'Grades'},
-+                         'graders': GRADERS, 'expected_shane_changes': changes})
++                         'graders': GRADERS})
 +    split = ROOT / 'prepared_visus_nhp/manifest.csv'
 +    ganaav = ROOT / 'data/baseline_annotation_20261023/multi_class_qc_dataset.csv'
-+    shane = ROOT / 'data/shane-image-file-listing.csv'
 +    exclusions = read_config(ROOT / 'prepared_visus_nhp/split_report.json')['shane_only_ids']
 +    build = {'schema': 'autoqc_dataset_build_v1', 'ganaav': {'path': relative(ganaav), 'sha256': sha256(ganaav)},
-+             'shane': {'path': relative(shane), 'sha256': sha256(shane)},
-+             'shane_authority': 'This is the raw version used by the recorded historical snapshots; earliest/original authority among differing copies remains unresolved',
++             'shane_authority': 'Recorded ratings source for each historical run; no comparison with earlier Shane grades',
 +             'split': {'path': relative(split), 'sha256': sha256(split)}, 'allowed_unmatched_ids': exclusions,
 +             'output_dir': 'model_dir/historical_datasets', 'profiles': profiles,
 +             'original_archive_sha256': '6ccfb237b8358e28caaa9a0cf152b9aa52dc3352371fbcda5d73fc6c185a6c34',
 +             'original_commit': 'unknown', 'ganaav_identity_confirmation': 'project owner, 2026-10-30'}
 +    (ROOT / 'configs').mkdir(exist_ok=True)
 +    write_json(ROOT / 'configs/historical_datasets.yaml', build)
-+    build_datasets(ROOT / 'configs/historical_datasets.yaml')
++    build_datasets(ROOT / 'configs/historical_datasets.yaml', training_records=True)
 +    queue, seen = [], {}
 +    for number, row in enumerate(completed, 1):
 +        historical = row['experiment_id']
@@ -1921,16 +1662,18 @@ new file mode 100644
 +        ('hard_ganaav', 'ganaav_labels.xlsx', 'hard_ce', False),
 +        ('hard_ganaav_weighted', 'ganaav_labels.xlsx', 'hard_ce', True),
 +        ('hard_shane', 'shane_labels.xlsx', 'hard_ce', False),
-+        ('ceiling_mean', 'ganaav_shane_ceiling_labels.xlsx', 'hard_ce', False),
-+        ('exact_pair_mean', 'ganaav_shane_mean_labels.xlsx', 'continuous_cdw_ce', False),
-+        ('exact_multigrader_mean', 'multigrader_mean_labels.xlsx', 'continuous_cdw_ce', False),
-+        ('soft_categorical', 'multigrader_soft_labels.xlsx', 'soft_ce', False),
-+        ('soft_categorical_weighted', 'multigrader_soft_labels.xlsx', 'soft_ce', True),
++        ('ceiling_mean', 'shane_ganaav_average_rounded_labels.xlsx', 'hard_ce', False),
++        ('exact_pair_mean', 'shane_ganaav_average_labels.xlsx', 'continuous_cdw_ce', False),
++        ('exact_multigrader_mean', 'multigrader_labels.xlsx', 'continuous_cdw_ce', False),
++        ('soft_categorical', 'multigrader_labels.xlsx', 'soft_ce', False),
++        ('soft_categorical_weighted', 'multigrader_labels.xlsx', 'soft_ce', True),
 +    ]
 +    for name, filename, loss, weighted in checks:
 +        config = copy.deepcopy(template)
 +        dataset = ROOT / output_dir / profile['name'] / filename
-+        frame, meta = load_workbook(dataset)
++        kind = ('exact_mean' if name.startswith('exact_') else 'soft_categorical' if name.startswith('soft_')
++                else 'ceiling_mean' if name == 'ceiling_mean' else 'hard_shane' if name == 'hard_shane' else 'hard_ganaav')
++        frame, meta = load_workbook(dataset, target_kind=kind)
 +        config.update(experiment_id='check_'+name, diagnostic_only=True,
 +                      historical={'classification': 'diagnostic only; settings borrowed explicitly from a ready template, not a recovered historical experiment'})
 +        config['model'] = {'head': 'five_logits', 'batch_normalization': False, 'output_sigmoid': False, 'dropout_p': .5,
@@ -1995,6 +1738,8 @@ new file mode 100644
 +            raise ValueError('Cannot resume a different queue/mode')
 +        if state['queue_sha256'] != sha256(queue_path):
 +            for item in queue.get('dataset_path_relocations', []):
++                if item['config'] not in {entry['config'] for entry in entries}:
++                    continue  # An explicitly deferred experiment is not resumed.
 +                before = read_config(item['original_config'])
 +                after = read_config(ROOT / item['config'])
 +                if sha256(item['archived_path']) != item['sha256']:
@@ -2003,6 +1748,12 @@ new file mode 100644
 +                if before != after:
 +                    raise ValueError('Queue compatibility permits dataset-path relocation only')
 +            state['queue_sha256'] = sha256(queue_path)
++        deferred = {entry['config']: entry for entry in queue['entries'] if entry['status'] == 'deferred_by_user'}
++        skipped = [path for path in state['remaining'] if path in deferred]
++        if skipped:
++            state.setdefault('skipped', []).extend(
++                {'config': path, 'reason': deferred[path]['reasons']} for path in skipped)
++            state['remaining'] = [path for path in state['remaining'] if path not in deferred]
 +        for completed in state['completed']:
 +            status = read_config(Path(completed['run']) / 'run_status.json')
 +            if status['status'] != 'completed' or not status['required_outputs_verified']:
@@ -2056,7 +1807,7 @@ new file mode 100644
 diff --git a/auto_qc/CNN/testing.py b/auto_qc/CNN/testing.py
 --- a/auto_qc/CNN/testing.py
 +++ b/auto_qc/CNN/testing.py
-@@ -1,284 +1,141 @@
+@@ -1,284 +1,142 @@
 +"""Load saved architectures; evaluate patches and whole images separately."""
 +import argparse
 +from pathlib import Path
@@ -2080,7 +1831,8 @@ diff --git a/auto_qc/CNN/testing.py b/auto_qc/CNN/testing.py
 -from sklearn.model_selection import train_test_split
 -from sklearn.preprocessing import label_binarize
 +
-+from .dataset import VOTES, extract_patches, load_workbook
++from .dataset import VOTES, extract_patches
++from datasets.generate_datasets import load_workbook
 +from .losses import grade_probabilities, ordering_diagnostics
 +from .metrics import calculate_combined_metrics, calculate_validation_metrics
 +from .utils import load_checkpoint, write_json
@@ -2469,13 +2221,14 @@ diff --git a/auto_qc/CNN/testing.py b/auto_qc/CNN/testing.py
 diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 --- a/auto_qc/CNN/training.py
 +++ b/auto_qc/CNN/training.py
-@@ -1,382 +1,279 @@
--import os
+@@ -1,382 +1,314 @@
 +"""One configured training entry point for original and later IQAnet methods."""
- import argparse
++import argparse
 +import copy
 +from datetime import datetime, timezone
 +import logging
+ import os
+-import argparse
 +from pathlib import Path
 +import shutil
 +import traceback
@@ -2577,11 +2330,12 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 -        if num_classes == 2:
 -            class_type = "singleclass"
 +
-+from .dataset import ImageQualityDataset, load_workbook, save_workbook, validate_records
++from .dataset import ImagePatchDataset
++from datasets.generate_datasets import load_workbook, save_workbook, validate_records
 +from .losses import loss_components
 +from .model import make_model
 +from .testing import evaluate
-+from .utils import ROOT, class_weights, code_version, fingerprint, load_checkpoint, read_config, seed_everything, sha256, state_copy, write_json
++from .utils import ROOT, class_weights, code_version, fingerprint, load_checkpoint, read_config, seed_everything, sha256, source_files, state_copy, write_json
 +
 +PATHS = {'hard_ganaav': ('five_logits', 'hard_ce'), 'hard_shane': ('five_logits', 'hard_ce'),
 +         'ceiling_mean': ('five_logits', 'hard_ce'), 'exact_mean': ('five_logits', 'continuous_cdw_ce'),
@@ -2594,7 +2348,8 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 +    dataset = ROOT / config['dataset']['path']
 +    if sha256(dataset) != config['dataset']['sha256']:
 +        raise ValueError('Configured workbook hash mismatch')
-+    frame, metadata = load_workbook(dataset, check_files=True)
++    frame, metadata = load_workbook(dataset, check_files=True,
++                                    target_kind=config['dataset']['target_kind'], graders=config['dataset']['graders'])
 +    kind = metadata['target_kind']
 +    if kind != config['dataset']['target_kind'] or metadata['graders'] != config['dataset']['graders']:
 +        raise ValueError('Dataset target kind / graders differ from configuration')
@@ -2665,16 +2420,120 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 +    return totals.tolist()
 +
 +
-+def history_figure(history, path):
-+    from PIL import Image, ImageDraw
-+    image = Image.new('RGB', (640, 360), 'white')
-+    draw = ImageDraw.Draw(image)
-+    draw.text((20, 10), 'Train (blue) and validation (red) selection losses', fill='black')
-+    maximum = max(1e-8, float(history[['train_primary_loss', 'val_primary_loss']].to_numpy().max()))
-+    for name, colour in [('train_primary_loss', 'blue'), ('val_primary_loss', 'red')]:
-+        points = [(40+i*560/max(1, len(history)-1), 320-280*v/maximum) for i, v in enumerate(history[name])]
-+        if len(points) > 1:
-+            draw.line(points, fill=colour, width=2)
++def history_figure(history, path, config=None, selected_epoch=None):
++    """Plot recorded epoch losses without smoothing or changing their values."""
++    os.environ.setdefault('MPLCONFIGDIR', str(ROOT / 'model_dir' / 'plot_cache'))
++    from matplotlib.backends.backend_agg import FigureCanvasAgg
++    from matplotlib.figure import Figure
++    from matplotlib.ticker import MaxNLocator
++
++    config = config or {}
++    loss = config.get('loss', {}).get('name')
++    titles = {'ordinal_bce': 'Ordinal head', 'joint_bce': 'Ordinal head',
++              'binary_bce': 'Frozen-feature binary head', 'hard_ce': 'Classification head',
++              'soft_ce': 'Soft-label classification head', 'continuous_cdw_ce': 'CDW-CE head'}
++    panels = [('primary', titles.get(loss, 'Primary objective'))]
++    if loss == 'joint_bce':
++        panels.append(('binary', 'Binary head'))
++    figure = Figure(figsize=(11.5 if len(panels) == 2 else 7.2, 4.5), dpi=180, layout='constrained')
++    FigureCanvasAgg(figure)
++    axes = figure.subplots(1, len(panels), squeeze=False)[0]
++    epochs = history['epoch'].to_numpy()
++    for axis, (component, title) in zip(axes, panels):
++        for prefix, label, colour in [('train', 'Training', '#2563EB'), ('val', 'Validation', '#EA580C')]:
++            axis.plot(epochs, history[f'{prefix}_{component}_loss'], label=label,
++                      color=colour, linewidth=1.9, marker='o' if len(history) == 1 else None)
++        if selected_epoch is not None:
++            axis.axvline(selected_epoch, color='#64748B', linestyle='--', linewidth=1.2,
++                         label=f'Selected checkpoint: epoch {selected_epoch}')
++        axis.set(title=title, xlabel='Epoch', ylabel='Loss')
++        axis.set_xlim((epochs[0], epochs[-1]) if len(epochs) > 1 else (epochs[0]-.5, epochs[0]+.5))
++        axis.xaxis.set_major_locator(MaxNLocator(nbins=7, integer=True))
++        axis.yaxis.set_major_locator(MaxNLocator(nbins=6))
++        axis.grid(axis='y', color='#E2E8F0', linewidth=.7)
++        axis.set_axisbelow(True)
++        axis.spines[['top', 'right']].set_visible(False)
++        axis.tick_params(labelsize=9)
++        axis.legend(frameon=False, fontsize=8, loc='best')
++    head = config.get('model', {}).get('head', 'IQAnet')
++    names = {'or_soft_binary': 'OR-Soft + binary head', 'or_soft': 'OR-Soft',
++             'coral': 'CORAL-Soft', 'frozen_binary': 'Frozen-feature binary head'}
++    title = names.get(head, 'IQAnet')
++    seed = config.get('training', {}).get('seed')
++    figure.suptitle(f'{title} â€” seed {seed}' if seed is not None else title, fontsize=14, fontweight='bold')
++    path = Path(path)
++    temporary = path.with_suffix('.plot.tmp')
++    figure.savefig(temporary, format='png', facecolor='white')
++    temporary.replace(path)
++    figure.clear()
++
++
++def train(config_path, output_root=Path('model_dir'), smoke=False, check_only=False):
++    config = copy.deepcopy(read_config(config_path))
++    frame, metadata = preflight(config)
++    if check_only:
++        print(f'CHECK PASS: {config["experiment_id"]}; train={int(frame.training_eligible.sum())}, monitor={int(frame.monitor_eligible.sum())}, evaluation={int(frame.evaluation_eligible.sum())}')
++        return None
++    if config.get('diagnostic_only') and not smoke:
++        raise ValueError('Diagnostic configurations may run only with --smoke')
++    if smoke:
++        # A declared diagnostic cohort, never labelled a scientific rerun.
++        for flag in ('training_eligible', 'monitor_eligible', 'evaluation_eligible'):
++            ids = frame.loc[frame[flag], 'image_id'].iloc[:2]
++            frame[flag] = frame.image_id.isin(ids)
++        config['training']['epochs'] = 1
++        config['diagnostic_smoke'] = {'real_images_per_split': 2, 'original_config': str(config_path), 'not_a_retrospective_result': True}
++        for key, flag in [('training', 'training_eligible'), ('monitor', 'monitor_eligible')]:
++            config['cohort'][key+'_image_ids'] = frame.loc[frame[flag], 'image_id'].tolist()
++        config['evaluation']['image_ids'] = frame.loc[frame.evaluation_eligible, 'image_id'].tolist()
++    name = f'{config["experiment_id"]}_{"smoke_" if smoke else ""}{datetime.now(timezone.utc):%Y%m%d_%H%M%S_%f}_{uuid.uuid4().hex[:8]}'
++    run = ROOT / output_root / name
++    run.mkdir(parents=True, exist_ok=False)
++    logger = logging.getLogger(name)
++    logger.setLevel(logging.INFO)
++    handlers = [logging.FileHandler(run / 'training.log', encoding='utf-8'), logging.StreamHandler()]
++    for handler in handlers:
++        handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
++        logger.addHandler(handler)
++    status = {'status': 'preparing', 'experiment_id': config['experiment_id'], 'run_dir': str(run), 'smoke': smoke}
++    write_json(run / 'run_status.json', status)
++    try:
++        config['code_version'] = code_version()
++        for source in source_files():
++            destination = run / 'source_code' / source.relative_to(ROOT)
++            destination.parent.mkdir(parents=True, exist_ok=True)
++            shutil.copyfile(source, destination)
++        config['dataset']['source_workbook_sha256'] = sha256(ROOT / config['dataset']['path'])
++        save_workbook(run / 'dataset.xlsx', frame, metadata)
++        # Ensure the exact saved records are the records training consumes.
++        frame, metadata = load_workbook(run / 'dataset.xlsx', check_files=True)
++        config['dataset']['run_snapshot_sha256'] = sha256(run / 'dataset.xlsx')
++        write_json(run / 'config.yaml', config)
++        seed = config['training']['seed']
++        seed_everything(seed)
++        device = config['training']['device']
++        if device == 'auto':
++            device = 'cuda' if torch.cuda.is_available() else 'cpu'
++        ordered = frame.set_index('image_id', drop=False)
++        train_frame = ordered.loc[config['cohort']['training_image_ids']].loc[lambda f: f.training_eligible].reset_index(drop=True)
++        validation = ordered.loc[config['cohort']['monitor_image_ids']].loc[lambda f: f.monitor_eligible].reset_index(drop=True)
++        weights = class_weights(train_frame, config['loss']['class_weights'])
++        if weights is not None:
++            weights = weights.to(device)
++        loaders = [DataLoader(ImagePatchDataset(part, metadata['target_kind'], augment=flip),
++                             batch_size=config['training']['batch_size'], shuffle=flip, num_workers=0,
++                             generator=torch.Generator().manual_seed(seed+offset))
++                   for part, flip, offset in [(train_frame, True, 0), (validation, False, 1)]]
++        seed_everything(seed)
++        model = make_model(config['model'], seed).to(device)
++        initial = fingerprint(model)
++        parameters = [p for p in model.parameters() if p.requires_grad]
++        options = dict(config['training']['optimizer_settings'])
++        optimizer_name = config['training']['optimizer']
++        if optimizer_name == 'AdamW':
++            optimizer = torch.optim.AdamW(parameters, **options)
++        elif optimizer_name == 'SGD':
++            optimizer = torch.optim.SGD(parameters, **options)
          else:
 -            class_type = "multiclass"
 -        model_name = (
@@ -2758,78 +2617,7 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 -        if os.path.exists(summary_csv_path):
 -            summary_df = pd.read_csv(summary_csv_path)
 -            summary_df = pd.concat([summary_df, pd.DataFrame([summary_data])], ignore_index=True)
-+            x, y = points[0]
-+            draw.ellipse((x-2, y-2, x+2, y+2), fill=colour)
-+    image.save(path)
-+
-+
-+def train(config_path, output_root=Path('model_dir'), smoke=False, check_only=False):
-+    config = copy.deepcopy(read_config(config_path))
-+    frame, metadata = preflight(config)
-+    if check_only:
-+        print(f'CHECK PASS: {config["experiment_id"]}; train={int(frame.training_eligible.sum())}, monitor={int(frame.monitor_eligible.sum())}, evaluation={int(frame.evaluation_eligible.sum())}')
-+        return None
-+    if config.get('diagnostic_only') and not smoke:
-+        raise ValueError('Diagnostic configurations may run only with --smoke')
-+    if smoke:
-+        # A declared diagnostic cohort, never labelled a scientific rerun.
-+        for flag in ('training_eligible', 'monitor_eligible', 'evaluation_eligible'):
-+            ids = frame.loc[frame[flag], 'image_id'].iloc[:2]
-+            frame[flag] = frame.image_id.isin(ids)
-+        config['training']['epochs'] = 1
-+        config['diagnostic_smoke'] = {'real_images_per_split': 2, 'original_config': str(config_path), 'not_a_retrospective_result': True}
-+        for key, flag in [('training', 'training_eligible'), ('monitor', 'monitor_eligible')]:
-+            config['cohort'][key+'_image_ids'] = frame.loc[frame[flag], 'image_id'].tolist()
-+        config['evaluation']['image_ids'] = frame.loc[frame.evaluation_eligible, 'image_id'].tolist()
-+    name = f'{config["experiment_id"]}_{"smoke_" if smoke else ""}{datetime.now(timezone.utc):%Y%m%d_%H%M%S_%f}_{uuid.uuid4().hex[:8]}'
-+    run = ROOT / output_root / name
-+    run.mkdir(parents=True, exist_ok=False)
-+    logger = logging.getLogger(name)
-+    logger.setLevel(logging.INFO)
-+    handlers = [logging.FileHandler(run / 'training.log', encoding='utf-8'), logging.StreamHandler()]
-+    for handler in handlers:
-+        handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
-+        logger.addHandler(handler)
-+    status = {'status': 'preparing', 'experiment_id': config['experiment_id'], 'run_dir': str(run), 'smoke': smoke}
-+    write_json(run / 'run_status.json', status)
-+    try:
-+        config['code_version'] = code_version()
-+        for source in sorted((ROOT / 'auto_qc').rglob('*.py')):
-+            destination = run / 'source_code' / source.relative_to(ROOT)
-+            destination.parent.mkdir(parents=True, exist_ok=True)
-+            shutil.copyfile(source, destination)
-+        config['dataset']['source_workbook_sha256'] = sha256(ROOT / config['dataset']['path'])
-+        save_workbook(run / 'dataset.xlsx', frame, metadata)
-+        # Ensure the exact saved records are the records training consumes.
-+        frame, metadata = load_workbook(run / 'dataset.xlsx', check_files=True)
-+        config['dataset']['run_snapshot_sha256'] = sha256(run / 'dataset.xlsx')
-+        write_json(run / 'config.yaml', config)
-+        seed = config['training']['seed']
-+        seed_everything(seed)
-+        device = config['training']['device']
-+        if device == 'auto':
-+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-+        ordered = frame.set_index('image_id', drop=False)
-+        train_frame = ordered.loc[config['cohort']['training_image_ids']].loc[lambda f: f.training_eligible].reset_index(drop=True)
-+        validation = ordered.loc[config['cohort']['monitor_image_ids']].loc[lambda f: f.monitor_eligible].reset_index(drop=True)
-+        weights = class_weights(train_frame, config['loss']['class_weights'])
-+        if weights is not None:
-+            weights = weights.to(device)
-+        loaders = [DataLoader(ImageQualityDataset(part, metadata['target_kind'], augment=flip),
-+                             batch_size=config['training']['batch_size'], shuffle=flip, num_workers=0,
-+                             generator=torch.Generator().manual_seed(seed+offset))
-+                   for part, flip, offset in [(train_frame, True, 0), (validation, False, 1)]]
-+        seed_everything(seed)
-+        model = make_model(config['model'], seed).to(device)
-+        initial = fingerprint(model)
-+        parameters = [p for p in model.parameters() if p.requires_grad]
-+        options = dict(config['training']['optimizer_settings'])
-+        optimizer_name = config['training']['optimizer']
-+        if optimizer_name == 'AdamW':
-+            optimizer = torch.optim.AdamW(parameters, **options)
-+        elif optimizer_name == 'SGD':
-+            optimizer = torch.optim.SGD(parameters, **options)
-         else:
+-        else:
 -            summary_df = pd.DataFrame([summary_data])
 -        
 -        summary_df.to_csv(summary_csv_path, index=False)
@@ -2896,7 +2684,7 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 +            raise RuntimeError('Evaluation population changed')
 +        if config['evaluation']['enable_test']:
 +            evaluate(reloaded, frame, config, run, split='test', device=device)
-+        history_figure(pd.DataFrame(history), run / 'training_history.png')
++        history_figure(pd.DataFrame(history), run / 'training_history.png', config, best_epoch)
 +        required = ['checkpoint.pth', 'dataset.xlsx', 'config.yaml', 'training_history.csv', 'training.log',
 +                    'validation_predictions.csv', 'validation_metrics.json', 'run_status.json']
 +        if any(not (run / name).is_file() for name in required):
@@ -3121,7 +2909,7 @@ diff --git a/auto_qc/CNN/training.py b/auto_qc/CNN/training.py
 diff --git a/auto_qc/CNN/utils.py b/auto_qc/CNN/utils.py
 --- a/auto_qc/CNN/utils.py
 +++ b/auto_qc/CNN/utils.py
-@@ -1,18 +1,95 @@
+@@ -1,18 +1,99 @@
 +"""Run provenance, reproducible RNG and checkpoint helpers."""
 +import hashlib
 +import importlib.metadata
@@ -3190,12 +2978,16 @@ diff --git a/auto_qc/CNN/utils.py b/auto_qc/CNN/utils.py
 +    return result.hexdigest()
 +
 +
++def source_files():
++    return sorted([*(ROOT / 'auto_qc').rglob('*.py'), *(ROOT / 'datasets').glob('*.py')])
++
++
 +def code_version():
 +    command = ['git', '-c', f'safe.directory={ROOT.as_posix()}', '-C', str(ROOT)]
 +    result = subprocess.run(command + ['rev-parse', 'HEAD'], capture_output=True, text=True)
 +    status = subprocess.run(command + ['status', '--porcelain'], capture_output=True, text=True)
 +    return {'commit': result.stdout.strip() or 'unknown', 'dirty': bool(status.stdout.strip()),
-+            'source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in sorted((ROOT / 'auto_qc').rglob('*.py'))},
++            'source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in source_files()},
 +            'dependencies': {name: importlib.metadata.version(name) for name in
 +                             ('torch', 'torchvision', 'numpy', 'pandas', 'Pillow', 'openpyxl', 'scikit-learn')}}
 +
@@ -3232,3 +3024,474 @@ diff --git a/auto_qc/CNN/utils.py b/auto_qc/CNN/utils.py
 +    model = make_model(config['model'], config['training']['seed'], load_source=False)
 +    model.load_state_dict(saved['model_state'], strict=True)
 +    return model.to(device).eval(), config, saved
+diff --git a/datasets/__init__.py b/datasets/__init__.py
+new file mode 100644
+--- /dev/null
++++ b/datasets/__init__.py
+@@ -0,0 +1 @@
++"""Dataset generation and selection scripts."""
+diff --git a/datasets/generate_baseline_split.py b/datasets/generate_baseline_split.py
+new file mode 100644
+--- /dev/null
++++ b/datasets/generate_baseline_split.py
+@@ -0,0 +1,63 @@
++"""Save baseline/non-baseline training selections using '.0' in the full image ID.
++
++Labels remain in reviewed_v2; these CSVs select all training images in each
++category. Existing patient assignments and validation/test sets are unchanged.
++"""
++import argparse
++import json
++from pathlib import Path
++import sys
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from datasets.generate_datasets import load_workbook
++from auto_qc.CNN.utils import sha256
++
++
++def select_training(records):
++    training = records.loc[records.split.eq('train'), ['image_id', 'patient_id']].copy()
++    training = training.sort_values('image_id')
++    training['baseline'] = training.image_id.str.contains('.0', regex=False)
++    baseline = training.loc[training.baseline, ['image_id', 'patient_id']].reset_index(drop=True)
++    non_baseline = training.loc[~training.baseline, ['image_id', 'patient_id']].reset_index(drop=True)
++    if baseline.empty or non_baseline.empty:
++        raise ValueError('Both training categories must contain images')
++    return baseline, non_baseline
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--labels', type=Path, default=ROOT / 'datasets/reviewed_v2/multigrader_labels.xlsx')
++    parser.add_argument('--output-dir', type=Path, help='New directory; existing outputs are never overwritten')
++    args = parser.parse_args()
++    labels = args.labels.resolve()
++    records, metadata = load_workbook(labels, check_files=True)
++    baseline, non_baseline = select_training(records)
++    output = args.output_dir or ROOT / 'datasets/baseline_split'
++    output.mkdir(parents=True, exist_ok=False)
++    baseline.to_csv(output / 'baseline_manifest.csv', index=False)
++    non_baseline.to_csv(output / 'non_baseline_manifest.csv', index=False)
++    summary = {
++        'baseline_rule': "Literal '.0' occurs anywhere in image_id; image paths are not searched",
++        'projects': 'All projects in the saved training split; no project-specific overrides',
++        'selection': 'All training images in each category; no sampling',
++        'baseline_images': len(baseline), 'non_baseline_images': len(non_baseline),
++        'baseline_patients': int(baseline.patient_id.nunique()),
++        'non_baseline_patients': int(non_baseline.patient_id.nunique()),
++        'validation_image_ids': records.loc[records.split.eq('validation'), 'image_id'].tolist(),
++        'test_policy': 'Never sampled or evaluated',
++        'labels': {'path': str(labels), 'sha256': sha256(labels)},
++        'dataset_manifest_sha256': sha256(labels.parent / 'manifest.json'),
++        'patient_split': metadata['sources']['split'],
++        'script_sha256': sha256(__file__),
++        'output_sha256': {name: sha256(output / name) for name in ('baseline_manifest.csv', 'non_baseline_manifest.csv')},
++    }
++    (output / 'selection.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
++    print(f'Baseline: {len(baseline)} images, {baseline.patient_id.nunique()} patients')
++    print(f'Non-baseline: {len(non_baseline)} images, {non_baseline.patient_id.nunique()} patients')
++    print(f'Validation unchanged: {len(summary["validation_image_ids"])} images')
++    print(f'Saved: {output.resolve()}')
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/datasets/generate_datasets.py b/datasets/generate_datasets.py
+new file mode 100644
+--- /dev/null
++++ b/datasets/generate_datasets.py
+@@ -0,0 +1,392 @@
++"""Generate five plain label tables from pinned ratings and one saved split."""
++import argparse
++import hashlib
++import json
++from pathlib import Path
++import shutil
++import sys
++
++import numpy as np
++import pandas as pd
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++from auto_qc.CNN.dataset import VOTES, ORDINAL
++from auto_qc.CNN.utils import code_version, read_config, sha256, write_json
++
++KINDS = ('hard_ganaav', 'hard_shane', 'ceiling_mean', 'exact_mean', 'soft_categorical', 'ordinal')
++
++
++def image_key(value):
++    text = str(value).strip().replace('\\', '/')
++    path = Path(text)
++    return path.stem if path.suffix.lower() in ('.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp') else path.name
++
++
++def canonical_graders(columns):
++    return ['ganaav_grade' if c == 'previousStudent_grade' else c for c in columns]
++
++
++def canonical_columns(frame):
++    frame = frame.copy()
++    if 'previousStudent_grade' in frame:
++        if 'ganaav_grade' in frame and not np.allclose(pd.to_numeric(frame.ganaav_grade, errors='coerce'),
++                pd.to_numeric(frame.previousStudent_grade, errors='coerce'), equal_nan=True):
++            raise ValueError('Conflicting ganaav / previousStudent aliases')
++        frame = frame.rename(columns={'previousStudent_grade': 'ganaav_grade'}) if 'ganaav_grade' not in frame else frame.drop(columns='previousStudent_grade')
++    if 'split' not in frame and 'mode' in frame:
++        frame['split'] = frame['mode']
++    if 'split' in frame:
++        frame['split'] = frame['split'].replace({'val': 'validation'})
++        frame['mode'] = frame['split'].replace({'validation': 'val'})
++    return frame
++
++
++def ratings_array(frame, graders):
++    graders = canonical_graders(graders)
++    if not graders or len(set(graders)) != len(graders) or not set(graders).issubset(frame.columns):
++        raise ValueError('Select unique existing grader columns')
++    arrays = []
++    for name in graders:
++        raw = frame[name]
++        missing = raw.isna() | raw.astype(str).str.strip().eq('')
++        values = pd.to_numeric(raw.where(~missing), errors='coerce')
++        invalid = ~missing & (~values.isin(range(1, 6)) | raw.map(lambda v: isinstance(v, (bool, np.bool_))))
++        if invalid.any():
++            raise ValueError(f'Invalid integer 1..5 rating in {name}: {frame.loc[invalid, "image_id"].tolist()[:5]}')
++        arrays.append(values.to_numpy(dtype=float))
++    return np.stack(arrays, axis=1)
++
++
++def generate_targets(frame, kind, graders, mean_missing_policy='require_all'):
++    if kind not in KINDS:
++        raise ValueError(f'Unsupported target kind: {kind}')
++    result = canonical_columns(frame)
++    graders = canonical_graders(graders)
++    ratings = ratings_array(result, graders)
++    counts = np.isfinite(ratings).sum(1)
++    votes = np.stack([(ratings == k).sum(1) for k in range(1, 6)], axis=1)
++    votes = np.divide(votes, counts[:, None], out=np.full_like(votes, np.nan, dtype=float), where=counts[:, None] > 0)
++    result[VOTES] = votes
++    result[ORDINAL] = np.stack([votes[:, k:].sum(1) for k in range(1, 5)], axis=1)
++    result['target_binary_unacceptable'] = result[ORDINAL[1]]
++    result['rating_count'] = counts
++    result['eligible'] = counts > 0
++    if kind in ('ceiling_mean', 'exact_mean'):
++        if mean_missing_policy not in ('require_all', 'available'):
++            raise ValueError('Explicit mean missing-rating policy required')
++        result['eligible'] = counts == len(graders) if mean_missing_policy == 'require_all' else counts > 0
++        mean = np.divide(np.nansum(ratings, axis=1), counts, out=np.full(len(frame), np.nan), where=counts > 0)
++        result['target_mean_grade'] = mean
++        if kind == 'ceiling_mean':
++            result['target_grade'] = np.ceil(mean)
++    elif kind in ('hard_ganaav', 'hard_shane'):
++        if graders != (['ganaav_grade'] if kind == 'hard_ganaav' else ['shane_grade']):
++            raise ValueError('Hard target grader does not match kind')
++        result['target_grade'] = ratings[:, 0]
++    if 'target_grade' in result:
++        result['target_class_index'] = result.target_grade - 1
++        result['image_grading'] = result.target_grade
++    elif kind == 'exact_mean':
++        result['image_grading'] = result.target_mean_grade
++    result['target_kind'] = kind
++    result['exclusion_reason'] = np.where(result.eligible, '', 'missing required selected ratings')
++    target_names = VOTES + ORDINAL + ['target_binary_unacceptable', 'target_mean_grade', 'target_grade', 'target_class_index']
++    for name in set(target_names) & set(result):
++        result.loc[~result.eligible, name] = np.nan
++    return result
++
++
++def validate_records(frame, check_files=False, held_out='VISUS-NHP'):
++    required = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
++    if frame.empty or not set(required).issubset(frame):
++        raise ValueError('Explicit image/patient/project/site/split records required before patching')
++    if frame[required].isna().any().any() or frame[required].astype(str).apply(lambda c: c.str.strip().eq('')).any().any():
++        raise ValueError('Empty identity / split metadata')
++    if frame.image_id.duplicated().any() or frame.image_path.map(lambda p: str(Path(p).resolve()).casefold()).duplicated().any():
++        raise ValueError('Duplicate image ID or path')
++    if not frame.image_id.eq(frame.image_path.map(image_key)).all():
++        raise ValueError('Image ID/path mismatch; preserve full variant suffixes')
++    if not frame.split.isin(('train', 'validation', 'test')).all() or frame.groupby('patient_id').split.nunique().gt(1).any():
++        raise ValueError('Invalid split or patient overlap')
++    if not frame.patient_id.eq(frame.image_id.str.split('_').str[:3].str.join('_')).all():
++        raise ValueError('Patient identity differs from original filename crosswalk')
++    if held_out and frame.loc[frame.project.eq(held_out), 'split'].ne('test').any():
++        raise ValueError(f'{held_out} must remain held out')
++    if check_files and not frame.image_path.map(lambda p: Path(p).is_file()).all():
++        raise FileNotFoundError('Missing image paths')
++
++
++def logical_hash(frame):
++    data = frame.sort_values('image_id').sort_index(axis=1).copy()
++    for name in data.select_dtypes(include='number'):
++        data[name] = data[name].astype(float)
++    return hashlib.sha256(data.to_json(orient='split', index=False, double_precision=15).encode()).hexdigest()
++
++
++def save_workbook(path, frame, metadata):
++    path = Path(path)
++    if path.exists():
++        raise FileExistsError(path)
++    metadata = dict(metadata, logical_content_sha256=logical_hash(frame))
++    with pd.ExcelWriter(path, engine='openpyxl') as writer:
++        frame.to_excel(writer, index=False, sheet_name='dataset')
++        pd.DataFrame({'key': list(metadata), 'value': [json.dumps(v, allow_nan=False) for v in metadata.values()]}).to_excel(writer, index=False, sheet_name='metadata')
++
++
++def load_label_workbook(path, check_files=False, target_kind=None, graders=None):
++    """Join plain labels to the pinned patient split; derive targets in memory.
++
++    The multigrader table supports ordinal, soft categorical and exact-mean
++    experiments. Its encoding and selected reviewers belong to the experiment,
++    rather than requiring another copy of the dataset for each loss.
++    """
++    path = Path(path)
++    manifest = read_config(path.parent / 'manifest.json')
++    spec = manifest['variants'][path.name]
++    if manifest['schema'] != 'autoqc_labels_v1' or sha256(path) != spec['sha256']:
++        raise ValueError('Plain label workbook hash/schema mismatch')
++    kind = target_kind or spec['target_kind']
++    selected = canonical_graders(graders if graders is not None else spec['graders'])
++    if path.name == manifest['ratings_file']:
++        if kind not in ('ordinal', 'soft_categorical', 'exact_mean'):
++            raise ValueError('Multigrader labels require an explicit supported target encoding')
++        if not selected or not set(selected).issubset(manifest['graders']):
++            raise ValueError('Select reviewers present in the multigrader table')
++    elif kind != spec['target_kind'] or selected != spec['graders']:
++        raise ValueError('Requested target encoding/graders differ from label table')
++    split_spec = manifest['sources']['split']
++    split_path = ROOT / split_spec['path']
++    if sha256(split_path) != split_spec['sha256']:
++        raise ValueError('Saved patient split hash mismatch')
++    frame = canonical_columns(pd.read_csv(split_path))
++    fields = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
++    frame = frame[fields].sort_values('image_id').reset_index(drop=True)
++    ratings_path = path.parent / manifest['ratings_file']
++    if sha256(ratings_path) != manifest['variants'][ratings_path.name]['sha256']:
++        raise ValueError('Shared multigrader ratings hash mismatch')
++    ratings = pd.read_excel(ratings_path, sheet_name='labels')
++    if list(ratings.columns) != ['image_filename', *manifest['graders']]:
++        raise ValueError('Unexpected multigrader columns')
++    ratings['image_id'] = ratings.image_filename.map(image_key)
++    if ratings.image_id.duplicated().any() or set(ratings.image_id) != set(frame.image_id):
++        raise ValueError('Multigrader IDs must exactly match the saved population')
++    aligned = ratings.set_index('image_id').reindex(frame.image_id)
++    frame[manifest['graders']] = aligned[manifest['graders']].to_numpy()
++    ratings_array(frame, manifest['graders'])
++    frame['image_filename'] = frame.image_path
++    frame = generate_targets(frame, kind, selected, spec['mean_missing_policy'])
++    validate_records(frame, check_files, manifest['held_out_project'])
++    labels = pd.read_excel(path, sheet_name='labels')
++    expected = pd.DataFrame({'image_filename': frame.image_path.map(lambda p: Path(p).name)})
++    if path.name == manifest['ratings_file']:
++        expected[manifest['graders']] = frame[manifest['graders']]
++    else:
++        expected['label'] = frame['target_mean_grade' if kind == 'exact_mean' else 'target_grade']
++    pd.testing.assert_frame_equal(labels, expected, check_dtype=False)
++    rule = spec['label_rule'] if kind == spec['target_kind'] else {
++        'exact_mean': 'exact arithmetic mean of available selected integer ratings',
++        'soft_categorical': 'fraction of available selected votes for each grade 1..5; equal image weight',
++    }[kind]
++    metadata = dict(manifest, schema='autoqc_dataset_v1', target_kind=kind, graders=selected,
++                    mean_missing_policy=spec['mean_missing_policy'], label_rule=rule,
++                    logical_content_sha256=logical_hash(frame))
++    return frame, metadata
++
++
++def load_workbook(path, check_files=False, *, target_kind=None, graders=None):
++    with pd.ExcelFile(path) as workbook:
++        plain_labels = 'metadata' not in workbook.sheet_names
++    if plain_labels:
++        return load_label_workbook(path, check_files, target_kind, graders)
++    frame = canonical_columns(pd.read_excel(path, sheet_name='dataset')).fillna({'exclusion_reason': ''})
++    values = pd.read_excel(path, sheet_name='metadata')
++    metadata = {row.key: json.loads(row.value) for row in values.itertuples()}
++    validate_records(frame, check_files, metadata.get('held_out_project'))
++    expected = generate_targets(frame.drop(columns=[c for c in frame if c.startswith('target_')] + ['image_grading'], errors='ignore'),
++                                metadata['target_kind'], metadata['graders'], metadata.get('mean_missing_policy', 'require_all'))
++    for name in [c for c in expected if c.startswith('target_') and c != 'target_kind'] + ['rating_count', 'eligible']:
++        if name not in frame or not np.allclose(pd.to_numeric(frame[name]), pd.to_numeric(expected[name]), rtol=0, atol=1e-12, equal_nan=True):
++            raise ValueError(f'Workbook consumed target disagrees with source ratings: {name}')
++    if logical_hash(frame.fillna({'exclusion_reason': ''})) != metadata['logical_content_sha256']:
++        raise ValueError('Workbook logical content hash mismatch')
++    return frame, metadata
++
++
++TRAINING_VARIANTS = {
++    'ganaav_labels.xlsx': ('hard_ganaav', ['ganaav_grade']),
++    'shane_labels.xlsx': ('hard_shane', ['shane_grade']),
++    'ganaav_shane_ceiling_labels.xlsx': ('ceiling_mean', ['ganaav_grade', 'shane_grade']),
++    'ganaav_shane_mean_labels.xlsx': ('exact_mean', ['ganaav_grade', 'shane_grade']),
++    'ganaav_shane_soft_labels.xlsx': ('soft_categorical', ['ganaav_grade', 'shane_grade']),
++    'multigrader_soft_labels.xlsx': ('soft_categorical', None),
++    'multigrader_mean_labels.xlsx': ('exact_mean', None),
++    'ordinal_targets.xlsx': ('ordinal', None),
++}
++VARIANTS = {
++    'ganaav_labels.xlsx': ('hard_ganaav', ['ganaav_grade']),
++    'shane_labels.xlsx': ('hard_shane', ['shane_grade']),
++    'shane_ganaav_average_rounded_labels.xlsx': ('ceiling_mean', ['ganaav_grade', 'shane_grade']),
++    'shane_ganaav_average_labels.xlsx': ('exact_mean', ['ganaav_grade', 'shane_grade']),
++    'multigrader_labels.xlsx': ('ordinal', None),
++}
++RULES = {
++    'hard_ganaav': 'ganaav integer grade; class_index=grade-1',
++    'hard_shane': 'shane integer grade; class_index=grade-1',
++    'ceiling_mean': 'ceil(arithmetic mean), all selected ratings required',
++    'exact_mean': 'exact arithmetic mean; paired mean requires both, historical multigrader mean ignores missing',
++    'soft_categorical': 'fraction of available selected votes for each grade 1..5; equal image weight',
++    'ordinal': 'P(grade>1),P(grade>2),P(grade>3),P(grade>4); available selected votes only',
++}
++
++
++def pinned_table(spec, excel=False):
++    path = ROOT / spec['path']
++    if sha256(path) != spec['sha256']:
++        raise ValueError(f'Input hash mismatch: {path}')
++    table = pd.read_excel(path, sheet_name=spec.get('sheet', 'Grades')) if excel else pd.read_csv(path)
++    table = canonical_columns(table)
++    if 'image_id' not in table:
++        table['image_id'] = table.image_filename.map(image_key)
++    if table.image_id.isna().any() or table.image_id.eq('').any() or table.image_id.duplicated().any():
++        raise ValueError(f'Duplicate/missing full IDs in {path}')
++    return table
++
++
++def join_sources(build, profile):
++    split = pinned_table(build['split'])
++    # Only assignment/identity columns, never the carrier manifest's rating values.
++    fields = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
++    result = split[fields].sort_values('image_id').reset_index(drop=True)
++    ganaav = pinned_table(build['ganaav'])
++    ratings = pinned_table(profile['ratings'], excel=True)
++    allowed = set(build['allowed_unmatched_ids'])
++    exclusions = []
++    for name, source in [('ganaav', ganaav), ('ratings', ratings)]:
++        unknown = set(source.image_id) - set(result.image_id)
++        if unknown - allowed:
++            raise ValueError(f'Unapproved unmatched {name} IDs: {sorted(unknown-allowed)}')
++        exclusions += [{'source': name, 'image_id': value, 'reason': 'outside fixed paired population'} for value in sorted(unknown)]
++        aligned = source.set_index('image_id').reindex(result.image_id)
++        for field in ('patient_id', 'project', 'project_site'):
++            if field in aligned:
++                supplied = aligned[field].notna()
++                if (supplied.to_numpy() & aligned[field].ne(result[field].to_numpy()).to_numpy()).any():
++                    raise ValueError(f'{name} metadata conflict: {field}')
++        if name == 'ganaav':
++            result['ganaav_grade'] = aligned.image_grading.to_numpy()
++    if set(result.image_id) - set(ratings.image_id):
++        raise ValueError('Current ratings source does not cover the fixed image population')
++    aligned = ratings.set_index('image_id').reindex(result.image_id)
++    if not np.allclose(pd.to_numeric(aligned.ganaav_grade), result.ganaav_grade, equal_nan=True):
++        raise ValueError('Ganaav ratings disagree with the supplied Ganaav source')
++    for name in canonical_graders(profile['graders']):
++        values = pd.to_numeric(aligned[name], errors='raise').to_numpy(dtype=float)
++        result[name] = values
++    ratings_array(result, profile['graders'])
++    result['image_filename'] = result.image_path
++    result = canonical_columns(result)
++    validate_records(result, check_files=True)
++    return result, exclusions
++
++
++def write_labels(path, labels):
++    """One worksheet, image filenames and labels only; no copied code or targets."""
++    labels.to_excel(path, index=False, sheet_name='labels')
++
++
++def build_datasets(config_path, verify_existing=False, output_dir=None, training_records=False):
++    build = read_config(config_path)
++    if not training_records and len(build['profiles']) != 1:
++        raise ValueError('Active dataset generation requires one current ratings source')
++    if output_dir is not None:
++        build['output_dir'] = str(output_dir)
++    code = ROOT / build['output_dir'] / build['profiles'][0]['name'] / '_generation_code'
++    if not verify_existing:
++        for profile in build['profiles']:
++            directory = ROOT / build['output_dir'] / profile['name']
++            if directory.exists():
++                raise FileExistsError(directory)
++        if training_records:
++            code.mkdir(parents=True, exist_ok=False)
++            for source in (Path(__file__), ROOT / 'auto_qc/CNN/dataset.py', ROOT / 'auto_qc/CNN/utils.py'):
++                shutil.copyfile(source, code / source.name)
++    summary = []
++    for profile in build['profiles']:
++        directory = ROOT / build['output_dir'] / profile['name']
++        frame, exclusions = join_sources(build, profile)
++        directory.mkdir(parents=True, exist_ok=True)
++        variants = TRAINING_VARIANTS if training_records else VARIANTS
++        label_metadata = {}
++        for filename, (kind, selected) in variants.items():
++            graders = canonical_graders(selected or profile['graders'])
++            dataset = generate_targets(frame, kind, graders, 'available' if selected is None else 'require_all')
++            metadata = {'schema': 'autoqc_dataset_v1', 'target_kind': kind, 'graders': graders,
++                        'mean_missing_policy': 'available' if selected is None else 'require_all',
++                        'label_rule': RULES[kind], 'grade_order': [1, 2, 3, 4, 5],
++                        'ganaav_identity': 'confirmed by project owner; previousStudent is the historical alias',
++                        'shane_source_authority': build['shane_authority'], 'rating_profile': profile['name'],
++                        'sources': {'ganaav': build['ganaav'], 'ratings': profile['ratings'], 'split': build['split']},
++                        'held_out_project': 'VISUS-NHP', 'source_exclusions': exclusions,
++                        'generator_sha256': sha256(__file__), 'dataset_module_sha256': sha256(ROOT / 'auto_qc/CNN/dataset.py')}
++            path = directory / filename
++            if not training_records:
++                labels = pd.DataFrame({'image_filename': frame.image_path.map(lambda p: Path(p).name)})
++                if selected is None:
++                    labels[graders] = frame[graders]
++                else:
++                    labels['label'] = dataset['target_mean_grade' if kind == 'exact_mean' else 'target_grade']
++                if verify_existing:
++                    saved = pd.read_excel(path, sheet_name='labels')
++                    pd.testing.assert_frame_equal(saved, labels, check_dtype=False)
++                else:
++                    write_labels(path, labels)
++                label_metadata[filename] = {
++                    'target_kind': kind, 'graders': graders,
++                    'mean_missing_policy': metadata['mean_missing_policy'],
++                    'label_rule': RULES[kind], 'sha256': sha256(path)}
++                summary.append({'path': str(path.relative_to(ROOT)), 'images': len(labels), 'file_sha256': sha256(path)})
++                continue
++            if verify_existing and path.exists():
++                saved, _ = load_workbook(path)
++                if logical_hash(saved.fillna({'exclusion_reason': ''})) != logical_hash(dataset):
++                    raise ValueError(f'Regeneration differs: {path}')
++            else:
++                save_workbook(path, dataset, metadata)
++                load_workbook(path, check_files=True)
++            summary.append({'path': str(path.relative_to(ROOT)), 'images': len(dataset), 'eligible': int(dataset.eligible.sum()),
++                            'logical_sha256': logical_hash(dataset), 'file_sha256': sha256(path)})
++        if not training_records:
++            manifest = dict(metadata, schema='autoqc_labels_v1', variants=label_metadata,
++                            ratings_file='multigrader_labels.xlsx', graders=canonical_graders(profile['graders']),
++                            code_version=code_version())
++            for key in ('target_kind', 'mean_missing_policy', 'label_rule'):
++                manifest.pop(key, None)
++            if verify_existing:
++                saved = read_config(directory / 'manifest.json')
++                for key in ('variants', 'sources', 'rating_profile', 'source_exclusions'):
++                    if saved[key] != manifest[key]:
++                        raise ValueError(f'Dataset provenance differs: {key}')
++                for filename in variants:
++                    load_workbook(directory / filename, check_files=True)
++            else:
++                write_json(directory / 'manifest.json', manifest)
++        elif not verify_existing:
++            pd.DataFrame(exclusions).to_csv(directory / 'exclusions.csv', index=False)
++    if not verify_existing and training_records:
++        write_json(ROOT / build['output_dir'] / 'build_results.json', summary)
++    print(f'{len(summary)} workbooks {"verified" if verify_existing else "generated"}; no splits regenerated')
++    return summary
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--config', type=Path, default=ROOT / 'configs/datasets.yaml')
++    parser.add_argument('--verify-existing', action='store_true')
++    parser.add_argument('--output-dir', type=Path, help='New output directory; never overwrites an existing build')
++    args = parser.parse_args()
++    build_datasets(args.config, args.verify_existing, args.output_dir)
++
++
++if __name__ == '__main__':
++    main()

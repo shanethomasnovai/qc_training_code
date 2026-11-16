@@ -1,151 +1,188 @@
-"""Image-level workbook records and the original 3x3 IQAnet patch extraction."""
-from functools import lru_cache
-import hashlib
-import json
+"""Original image loader and patch functions, with prepared patches for current runs."""
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from PIL import Image
+
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
-
-VOTES = [f'target_grade_{k}' for k in range(1, 6)]
-ORDINAL = [f'target_above_grade_{k}' for k in range(1, 5)]
-KINDS = ('hard_ganaav', 'hard_shane', 'ceiling_mean', 'exact_mean', 'soft_categorical', 'ordinal')
+from torchvision.transforms import ToPILImage
+from data.labels import VOTES, ORDINAL
 
 
-def image_key(value):
-    text = str(value).strip().replace('\\', '/')
-    path = Path(text)
-    return path.stem if path.suffix.lower() in ('.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp') else path.name
+class ImageQualityDataset(Dataset):
+    def __init__(self, data, transform=None, label_mapping=None):
+        self.transform = transform
+        self.data = pd.read_csv(data) if isinstance(data, (str, Path)) else data
+        self.data = self.data.reset_index(drop=True)
+        self.label_mapping = label_mapping
+        # Accept the pasted original columns and the archived branch's names.
+        self.image_column = 'Image' if 'Image' in self.data else 'image_filename'
+        self.label_column = 'Quality' if 'Quality' in self.data else 'image_grading'
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        image_path = self.data.loc[idx, self.image_column]
+        quality = self.data.loc[idx, self.label_column]
+
+        with Image.open(image_path) as source:
+            image = self.transform(source) if self.transform else source.copy()
+
+        if self.label_mapping:
+            quality = self.label_mapping[quality]
+
+        return image, quality
 
 
-def canonical_graders(columns):
-    return ['ganaav_grade' if c == 'previousStudent_grade' else c for c in columns]
+def patch_dataset(dataset):
+    '''Extract patches from a dataset of images.
+
+    Args:
+        dataset (torch.utils.data.Dataset): dataset of images
+
+    Returns:
+        list: list of tuples containing subimages and labels
+    '''
+
+    transformed_data = []
+
+    for i in range(len(dataset)):
+
+        image, label = dataset[i]
+
+        # Calculate patch size
+        _, height, width = image.size()
+        sub_image_width = width // 2
+        sub_image_height = height // 2
+
+        # Reshape the image tensor using unfold
+        unfolded = torch.nn.functional.unfold(
+            image,
+            (sub_image_height, sub_image_width),
+            stride=(sub_image_height, sub_image_width)
+            )
+
+        # Reshape the unfolded tensor to get sub-images
+        num_patches = unfolded.shape[1]
+        # Unfold stores patches as columns; transpose before reshaping.
+        sub_images = unfolded.transpose(0, 1).reshape(
+            num_patches, image.size(0), sub_image_height, sub_image_width)
+
+        # Duplicate labels for each sub-image
+        labels = [label] * num_patches
+
+        # Append sub-images and labels to the transformed data
+        transformed_data.extend(zip(sub_images, labels))
+
+    return transformed_data
 
 
-def canonical_columns(frame):
-    frame = frame.copy()
-    if 'previousStudent_grade' in frame:
-        if 'ganaav_grade' in frame and not np.allclose(pd.to_numeric(frame.ganaav_grade, errors='coerce'),
-                pd.to_numeric(frame.previousStudent_grade, errors='coerce'), equal_nan=True):
-            raise ValueError('Conflicting ganaav / previousStudent aliases')
-        frame = frame.rename(columns={'previousStudent_grade': 'ganaav_grade'}) if 'ganaav_grade' not in frame else frame.drop(columns='previousStudent_grade')
-    if 'split' not in frame and 'mode' in frame:
-        frame['split'] = frame['mode']
-    if 'split' in frame:
-        frame['split'] = frame['split'].replace({'val': 'validation'})
-        frame['mode'] = frame['split'].replace({'validation': 'val'})
-    return frame
+def subsample_subimages(
+        dataset,
+        method='+',
+        patch_size=256,
+        df=None,
+        class_labels=True,
+        grid_size=3,
+        verbose=True
+        ):
 
+    '''Subsample subimages from a dataset of images.
 
-def ratings_array(frame, graders):
-    graders = canonical_graders(graders)
-    if not graders or len(set(graders)) != len(graders) or not set(graders).issubset(frame.columns):
-        raise ValueError('Select unique existing grader columns')
-    arrays = []
-    for name in graders:
-        raw = frame[name]
-        missing = raw.isna() | raw.astype(str).str.strip().eq('')
-        values = pd.to_numeric(raw.where(~missing), errors='coerce')
-        invalid = ~missing & (~values.isin(range(1, 6)) | raw.map(lambda v: isinstance(v, (bool, np.bool_))))
-        if invalid.any():
-            raise ValueError(f'Invalid integer 1..5 rating in {name}: {frame.loc[invalid, "image_id"].tolist()[:5]}')
-        arrays.append(values.to_numpy(dtype=float))
-    return np.stack(arrays, axis=1)
+    Args:
+        dataset (torch.utils.data.Dataset): dataset of images
+        method (str): Subsample method. Options are '+', 'x', 'all'
+        patch_size (int): size of subimages
+        df (pandas.DataFrame): dataframe containing image paths and labels
+        class_labels (bool): whether dataset contains labels
+        grid_size (int): size of grid to subsample subimages from
 
+    Returns:
+        list: list of tuples containing subimages and labels
+        pandas.DataFrame: Image paths, labels, and subimage positions
+    '''
 
-def generate_targets(frame, kind, graders, mean_missing_policy='require_all'):
-    if kind not in KINDS:
-        raise ValueError(f'Unsupported target kind: {kind}')
-    result = canonical_columns(frame)
-    graders = canonical_graders(graders)
-    ratings = ratings_array(result, graders)
-    counts = np.isfinite(ratings).sum(1)
-    votes = np.stack([(ratings == k).sum(1) for k in range(1, 6)], axis=1)
-    votes = np.divide(votes, counts[:, None], out=np.full_like(votes, np.nan, dtype=float), where=counts[:, None] > 0)
-    result[VOTES] = votes
-    result[ORDINAL] = np.stack([votes[:, k:].sum(1) for k in range(1, 5)], axis=1)
-    result['target_binary_unacceptable'] = result[ORDINAL[1]]
-    result['rating_count'] = counts
-    result['eligible'] = counts > 0
-    if kind in ('ceiling_mean', 'exact_mean'):
-        if mean_missing_policy not in ('require_all', 'available'):
-            raise ValueError('Explicit mean missing-rating policy required')
-        result['eligible'] = counts == len(graders) if mean_missing_policy == 'require_all' else counts > 0
-        mean = np.divide(np.nansum(ratings, axis=1), counts, out=np.full(len(frame), np.nan), where=counts > 0)
-        result['target_mean_grade'] = mean
-        if kind == 'ceiling_mean':
-            result['target_grade'] = np.ceil(mean)
-    elif kind in ('hard_ganaav', 'hard_shane'):
-        if graders != (['ganaav_grade'] if kind == 'hard_ganaav' else ['shane_grade']):
-            raise ValueError('Hard target grader does not match kind')
-        result['target_grade'] = ratings[:, 0]
-    if 'target_grade' in result:
-        result['target_class_index'] = result.target_grade - 1
-        result['image_grading'] = result.target_grade
-    elif kind == 'exact_mean':
-        result['image_grading'] = result.target_mean_grade
-    result['target_kind'] = kind
-    result['exclusion_reason'] = np.where(result.eligible, '', 'missing required selected ratings')
-    target_names = VOTES + ORDINAL + ['target_binary_unacceptable', 'target_mean_grade', 'target_grade', 'target_class_index']
-    for name in set(target_names) & set(result):
-        result.loc[~result.eligible, name] = np.nan
-    return result
+    # Define the positions of the subimages in the 3x3 grid
+    if method == '+':
+        subimage_positions = [2, 4, 6, 8]
+    elif method == 'x':
+        subimage_positions = [1, 3, 5, 7, 9]
+    elif method == 'all':
+        subimage_positions = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    else:
+        raise ValueError(f'Unknown patch method: {method}')
 
+    num_patches = len(subimage_positions)
 
-def validate_records(frame, check_files=False, held_out='VISUS-NHP'):
-    required = ['image_id', 'image_path', 'patient_id', 'project', 'project_site', 'split']
-    if frame.empty or not set(required).issubset(frame):
-        raise ValueError('Explicit image/patient/project/site/split records required before patching')
-    if frame[required].isna().any().any() or frame[required].astype(str).apply(lambda c: c.str.strip().eq('')).any().any():
-        raise ValueError('Empty identity / split metadata')
-    if frame.image_id.duplicated().any() or frame.image_path.map(lambda p: str(Path(p).resolve()).casefold()).duplicated().any():
-        raise ValueError('Duplicate image ID or path')
-    if not frame.image_id.eq(frame.image_path.map(image_key)).all():
-        raise ValueError('Image ID/path mismatch; preserve full variant suffixes')
-    if not frame.split.isin(('train', 'validation', 'test')).all() or frame.groupby('patient_id').split.nunique().gt(1).any():
-        raise ValueError('Invalid split or patient overlap')
-    if not frame.patient_id.eq(frame.image_id.str.split('_').str[:3].str.join('_')).all():
-        raise ValueError('Patient identity differs from original filename crosswalk')
-    if held_out and frame.loc[frame.project.eq(held_out), 'split'].ne('test').any():
-        raise ValueError(f'{held_out} must remain held out')
-    if check_files and not frame.image_path.map(lambda p: Path(p).is_file()).all():
-        raise FileNotFoundError('Missing image paths')
+    # Define the transformation to extract subimages
+    crop_transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
 
+    n_samples = len(dataset)
 
-def logical_hash(frame):
-    data = frame.sort_values('image_id').sort_index(axis=1).copy()
-    for name in data.select_dtypes(include='number'):
-        data[name] = data[name].astype(float)
-    return hashlib.sha256(data.to_json(orient='split', index=False, double_precision=15).encode()).hexdigest()
+    has_mode = df is not None and 'mode' in df.columns
 
+    transformed_data = []
+    for i in range(len(dataset)):
 
-def save_workbook(path, frame, metadata):
-    path = Path(path)
-    if path.exists():
-        raise FileExistsError(path)
-    metadata = dict(metadata, logical_content_sha256=logical_hash(frame))
-    with pd.ExcelWriter(path, engine='openpyxl') as writer:
-        frame.to_excel(writer, index=False, sheet_name='dataset')
-        pd.DataFrame({'key': list(metadata), 'value': [json.dumps(v, allow_nan=False) for v in metadata.values()]}).to_excel(writer, index=False, sheet_name='metadata')
+        if verbose:
+            print(f' {i+1}/{n_samples}', end='\r')
 
+        if class_labels:
+            image, label = dataset[i]
+        else:
+            image = dataset[i]
 
-def load_workbook(path, check_files=False):
-    frame = canonical_columns(pd.read_excel(path, sheet_name='dataset')).fillna({'exclusion_reason': ''})
-    values = pd.read_excel(path, sheet_name='metadata')
-    metadata = {row.key: json.loads(row.value) for row in values.itertuples()}
-    validate_records(frame, check_files, metadata.get('held_out_project'))
-    expected = generate_targets(frame.drop(columns=[c for c in frame if c.startswith('target_')] + ['image_grading'], errors='ignore'),
-                                metadata['target_kind'], metadata['graders'], metadata.get('mean_missing_policy', 'require_all'))
-    for name in [c for c in expected if c.startswith('target_') and c != 'target_kind'] + ['rating_count', 'eligible']:
-        if name not in frame or not np.allclose(pd.to_numeric(frame[name]), pd.to_numeric(expected[name]), rtol=0, atol=1e-12, equal_nan=True):
-            raise ValueError(f'Workbook consumed target disagrees with source ratings: {name}')
-    if logical_hash(frame.fillna({'exclusion_reason': ''})) != metadata['logical_content_sha256']:
-        raise ValueError('Workbook logical content hash mismatch')
-    return frame, metadata
+        if has_mode:
+            mode = df.loc[i, 'mode']
+
+        subimages = []
+        for position in subimage_positions:
+            # Calculate the row and column indices of the subimage position
+            left = ((position - 1) % grid_size) * patch_size
+            top = ((position - 1) // grid_size) * patch_size
+            right = left + patch_size
+            bottom = top + patch_size
+
+            # Crop and transform the subimage
+            subimage = crop_transform(ToPILImage()(image)
+                                      .crop((left, top, right, bottom)))
+            subimages.append(subimage)
+
+        # Append sub-images and labels (and mode) to the transformed data
+        if class_labels:
+            labels = [label] * num_patches
+            if has_mode:
+                modes = [mode] * num_patches
+                transformed_data.extend(zip(subimages, labels, modes))
+            else:
+                transformed_data.extend(zip(subimages, labels))
+        else:
+            transformed_data.extend(subimages)
+
+    if df is not None:
+        n = len(df)
+        # duplicate rows len(subimage_positions) times
+        df = df.loc[df.index.repeat(len(subimage_positions))] \
+            .reset_index(drop=True)
+        # add subimage positions
+        df['subimage_position'] = subimage_positions * n
+
+    else:
+        df = pd.DataFrame(
+            {
+                'subimage_position': subimage_positions * n_samples
+            }
+        )
+
+    return transformed_data, df
+
+# Current experiments supply precomputed scalar or vector targets.
 
 
 def target_tensor(frame, kind):
@@ -156,37 +193,63 @@ def target_tensor(frame, kind):
     return values.squeeze(1) if kind == 'exact_mean' else values
 
 
-def image_transform():
-    return transforms.Compose([transforms.Resize((768, 768)), transforms.Grayscale(num_output_channels=1), transforms.ToTensor()])
+def image_transform(input_mode='patches'):
+    if input_mode not in ('patches', 'whole_image'):
+        raise ValueError('input_mode must be patches or whole_image')
+    size = 256 if input_mode == 'whole_image' else 768
+    return transforms.Compose([transforms.Resize((size, size)), transforms.Grayscale(num_output_channels=1), transforms.ToTensor()])
 
 
 def extract_patches(path):
-    # Keep original Resize -> Grayscale -> Tensor -> PIL -> grid-crop sequence.
     with Image.open(path) as image:
         tensor = image_transform()(image)
-    pil = transforms.ToPILImage()(tensor)
-    return torch.stack([transforms.ToTensor()(pil.crop((c*256, r*256, (c+1)*256, (r+1)*256))) for r in range(3) for c in range(3)])
+    patches, _ = subsample_subimages([tensor], method='all', class_labels=False, verbose=False)
+    return torch.stack(patches)
 
 
-class ImageQualityDataset(Dataset):
-    """Already split image records exposed as patches, then appended training flips."""
-    def __init__(self, frame, kind, augment=False):
+def extract_inputs(path, input_mode='patches'):
+    """Use identical preprocessing during training and checkpoint evaluation."""
+    if input_mode == 'patches':
+        return extract_patches(path)
+    with Image.open(path) as image:
+        return image_transform(input_mode)(image).unsqueeze(0)
+
+
+class ImagePatchDataset(Dataset):
+    """Prepare nine original crops or one resized whole image, with flips on access.
+
+    ToPILImage -> ToTensor already quantises pixels to uint8 / 255. Store those
+    exact bytes, then use the same float division on access. This uses a quarter
+    of the float cache's memory, with no duplicated cache for horizontal flips.
+    """
+    def __init__(self, frame, kind, augment=False, input_mode='patches'):
         self.frame = frame.reset_index(drop=True)
         self.targets = target_tensor(self.frame, kind)
         self.augment = augment
-        self.base_length = len(frame) * 9
+        self.inputs_per_image = 1 if input_mode == 'whole_image' else 9
+        self.base_length = len(frame) * self.inputs_per_image
         if frame.empty or frame.split.nunique() != 1 or not frame.eligible.all():
             raise ValueError('Supply one nonempty eligible split before extracting patches')
+        data = self.frame.assign(Image=self.frame.image_path, Quality=list(self.targets))
+        self.images = ImageQualityDataset(data, transform=image_transform(input_mode))
+        self._patches = []
+        for image_index in range(len(self.images)):
+            if input_mode == 'whole_image':
+                pixels = self.images[image_index][0].unsqueeze(0)
+            else:
+                patches, _ = subsample_subimages([self.images[image_index]], method='all', verbose=False)
+                pixels = torch.stack([image for image, _ in patches])
+            self._patches.append(pixels.mul(255).round_().to(torch.uint8))
+        self.cache_nbytes = sum(p.numel() * p.element_size() for p in self._patches)
 
     def __len__(self):
         return self.base_length * (2 if self.augment else 1)
 
-    @lru_cache(maxsize=32)
     def patches(self, image_index):
-        return extract_patches(self.frame.iloc[image_index].image_path)
+        return self._patches[image_index].to(torch.float32).div_(255)
 
     def __getitem__(self, index):
         flipped = index >= self.base_length
-        image_index, patch = divmod(index % self.base_length, 9)
-        value = self.patches(image_index)[patch]
+        image_index, patch = divmod(index % self.base_length, self.inputs_per_image)
+        value = self._patches[image_index][patch].to(torch.float32).div_(255)
         return (value.flip(-1) if flipped else value), self.targets[image_index]

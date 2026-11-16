@@ -1,0 +1,42 @@
+# Selected historical configuration on current reviewed labels.
+local_root: C:/Users/Shane/Desktop/qc_data
+
+experiment_name: selected_soft_ordinal_coral_1
+
+model:
+  head: coral
+  dropout_p: 0.5
+  batch_normalization: false
+
+data:
+  dataset: reviewed_v2/multigrader_labels.xlsx
+  target: ordinal
+
+training:
+  seed: 42
+  epochs: 50
+  batch_size: 16
+  patience: 10
+  device: auto
+
+optimizer:
+  name: AdamW
+  lr: 0.0001
+  weight_decay: 0.05
+
+scheduler:
+  enabled: true
+  name: ReduceLROnPlateau
+  mode: min
+  factor: 0.5
+  patience: 3
+  min_lr: 1.0e-05
+  threshold: 0.001
+
+loss:
+  name: ordinal_bce
+  class_weights:
+    mode: none
+
+evaluation:
+  enable_test: false

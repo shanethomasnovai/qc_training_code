@@ -8,19 +8,18 @@ from pathlib import Path
 import shutil
 import time
 
+from .configuration import load_run_config, model_config_name, write_model_config
+from .utils import run_config_path
+
 ROOT = Path(__file__).resolve().parents[2]
+SUPPORT = ROOT / 'model_dir' / 'results_support'
+CURVE_STYLE = 'labelled_axes_v1'
 FILES = {
     'checkpoint.pth': 'checkpoint.pth',
     'training_history.png': 'learning_curve.png',
-    'training_history.csv': 'training_history.csv',
-    'config.yaml': 'config.yaml',
     'dataset.xlsx': 'dataset.xlsx',
     'validation_predictions.csv': 'validation_predictions.csv',
     'validation_metrics.json': 'validation_metrics.json',
-    'validation_confusion_matrix.png': 'validation_confusion_matrix.png',
-    'validation_confusion_matrix.csv': 'validation_confusion_matrix.csv',
-    'training.log': 'training.log',
-    'run_status.json': 'run_status.json',
 }
 
 
@@ -51,29 +50,167 @@ def condition(config):
     return 'full_data' if len(config['cohort']['training_image_ids']) == 508 else 'cohort'
 
 
+def refresh_curve(source, destination, support, receipt, config, status):
+    """Render a review plot from the CSV; preserve the original run's PNG."""
+    derivation = {'style': CURVE_STYLE, 'source_file': 'training_history.csv',
+                  'source_sha256': digest(source / 'training_history.csv'),
+                  'original_plot_sha256': digest(source / 'training_history.png'),
+                  'selected_epoch': status['selected_epoch']}
+    if receipt.get('learning_curve') == derivation:
+        return
+    import pandas as pd
+    from .training import history_figure
+    history_figure(pd.read_csv(source / 'training_history.csv'), destination / 'learning_curve.png',
+                   config, status['selected_epoch'])
+    receipt['learning_curve'] = derivation
+    receipt['file_sha256']['learning_curve.png'] = digest(destination / 'learning_curve.png')
+    receipt['note'] = 'Verified copies; learning_curve.png rendered from the original epoch CSV; original run artifacts retained'
+    write_json(support / 'source_run.json', receipt)
+
+
+def refresh_predictions(source, destination, support, receipt, config):
+    """Simplify the review CSV without editing or relabelling source results."""
+    filename = 'validation_predictions.csv'
+    derivation = {'style': 'selected_columns_v1', 'source_file': filename,
+                  'source_sha256': digest(source / filename),
+                  'graders': config['dataset']['graders']}
+    if receipt.get('predictions') == derivation:
+        return
+    import pandas as pd
+    from .testing import prediction_summary
+    # Preserve every retained CSV cell, including full precision and missing ratings.
+    records = pd.read_csv(source / filename, dtype=str, keep_default_na=False)
+    temporary = destination / (filename + '.tmp')
+    prediction_summary(records, config['dataset']['graders']).to_csv(temporary, index=False)
+    temporary.replace(destination / filename)
+    receipt['predictions'] = derivation
+    receipt['file_sha256'][filename] = digest(destination / filename)
+    receipt['note'] = ('Original run artifacts retained; learning curve rendered from recorded losses; '
+                       'predictions contain selected columns with unchanged values')
+    write_json(support / 'source_run.json', receipt)
+
+
+def refresh_dataset(source, destination, support, receipt, config):
+    """Export labels for the actual training/evaluation cohorts, not internal fields.
+
+    The original run snapshot remains the reproducible input for checkpoint loading.
+    This single-sheet review copy is not a replacement training snapshot.
+    """
+    derivation = {'style': 'used_labels_v1', 'source_file': 'dataset.xlsx',
+                  'source_sha256': digest(source / 'dataset.xlsx'),
+                  'config_sha256': digest(run_config_path(source)),
+                  'population': 'configured training and evaluation image IDs'}
+    if receipt.get('dataset') == derivation:
+        return
+    import pandas as pd
+    records = pd.read_excel(source / 'dataset.xlsx', sheet_name='dataset').set_index('image_id', drop=False)
+    training = config['cohort']['training_image_ids']
+    validation = config['evaluation']['image_ids']
+    if not records.index.is_unique or len(set(training + validation)) != len(training + validation):
+        raise ValueError('Duplicate or overlapping dataset image IDs')
+    selected = records.loc[training + validation]
+    if (not records.loc[training, 'split'].eq('train').all()
+            or not records.loc[validation, 'split'].eq('validation').all()
+            or not records.loc[training, 'training_eligible'].all()
+            or not records.loc[validation, 'evaluation_eligible'].all()):
+        raise ValueError('Dataset selections disagree with saved splits/eligibility')
+    columns = ['image_id', 'split', *config['dataset']['graders']]
+    labels = selected[columns].reset_index(drop=True)
+    temporary = destination / 'dataset.tmp.xlsx'
+    labels.to_excel(temporary, index=False, sheet_name='dataset', freeze_panes=(1, 0))
+    temporary.replace(destination / 'dataset.xlsx')
+    receipt['dataset'] = derivation
+    receipt['file_sha256']['dataset.xlsx'] = digest(destination / 'dataset.xlsx')
+    receipt['note'] = ('Original run artifacts retained; review curve, predictions and dataset '
+                       'are derived views with unchanged recorded values')
+    write_json(support / 'source_run.json', receipt)
+
+
+def refresh_config(source, destination, support, receipt, config):
+    """Replace the visible full config with a model-named settings summary."""
+    derivation = {'style': 'model_settings_v2',
+                  'source_sha256': digest(run_config_path(source)),
+                  'dataset_sha256': digest(source / 'dataset.xlsx')}
+    filename = model_config_name(config)
+    if receipt.get('config_summary') == derivation and (destination / filename).is_file():
+        return
+    path = write_model_config(destination, config)
+    receipt['config_summary'] = derivation
+    receipt['file_sha256'][filename] = digest(path)
+    receipt['source_files'][filename] = str(run_config_path(source).relative_to(source))
+    write_json(support / 'source_run.json', receipt)
+
+
 def export_run(source, output):
     source = Path(source).resolve()
-    status, config = read(source / 'run_status.json'), read(source / 'config.yaml')
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    status, config = read(source / 'run_status.json'), load_run_config(source)
     if status['status'] != 'completed' or status.get('smoke') or not status.get('required_outputs_verified'):
         raise ValueError(f'Only verified completed full runs can be collected: {source}')
     identifier = config['experiment_id']
-    number = identifier.split('_')[1]
-    label = f'{config["model"]["head"]}__{condition(config)}__seed{config["training"]["seed"]}__{number}_{source.name.split("_")[-1]}'
+    tag = (f'{identifier.split("_")[1]}_{source.name.split("_")[-1]}'
+           if identifier.startswith('rerun_') else source.name.removeprefix(identifier + '_'))
+    label = f'{config["model"]["head"]}__{condition(config)}__seed{config["training"]["seed"]}__{tag}'
     destination = output / label
+    support = SUPPORT / label
+    support.mkdir(parents=True, exist_ok=True)
     if destination.exists():
-        receipt = read(destination / 'source_run.json')
+        receipt_path = destination / 'source_run.json'
+        receipt = read(receipt_path if receipt_path.exists() else support / 'source_run.json')
         if receipt['source_run'] != str(source):
             raise FileExistsError(f'Result folder belongs to another run: {destination}')
         for filename, expected in receipt['file_sha256'].items():
-            if digest(destination / filename) != expected or digest(source / receipt['source_files'][filename]) != expected:
+            collected = destination / filename
+            if not collected.exists():
+                collected = support / filename
+            if filename == 'learning_curve.png' and receipt.get('learning_curve'):
+                curve = receipt['learning_curve']
+                source_matches = (digest(source / curve['source_file']) == curve['source_sha256']
+                                  and digest(source / receipt['source_files'][filename]) == curve['original_plot_sha256'])
+            elif filename == 'validation_predictions.csv' and receipt.get('predictions'):
+                source_matches = digest(source / filename) == receipt['predictions']['source_sha256']
+            elif filename == 'dataset.xlsx' and receipt.get('dataset'):
+                source_matches = (digest(source / filename) == receipt['dataset']['source_sha256']
+                                  and digest(run_config_path(source)) == receipt['dataset']['config_sha256'])
+            elif filename == model_config_name(config) and receipt.get('config_summary'):
+                source_matches = (digest(run_config_path(source)) == receipt['config_summary']['source_sha256']
+                                  and digest(source / 'dataset.xlsx') == receipt['config_summary']['dataset_sha256'])
+            else:
+                source_matches = digest(source / receipt['source_files'][filename]) == expected
+            if digest(collected) != expected or not source_matches:
                 raise ValueError(f'Collected result/source changed; refusing overwrite: {destination / filename}')
+        # Backfill newly included artifacts in folders collected by older versions.
+        for original, target in FILES.items():
+            collected = destination / target
+            if target in receipt['file_sha256'] and collected.exists():
+                continue
+            expected = digest(source / original)
+            if collected.exists():
+                if digest(collected) != expected:
+                    raise ValueError(f'Collected result differs from source: {collected}')
+            else:
+                temporary = collected.with_suffix(collected.suffix + '.tmp')
+                shutil.copy2(source / original, temporary)
+                if digest(temporary) != expected:
+                    raise ValueError(f'Copy verification failed: {target}')
+                temporary.replace(collected)
+            receipt['file_sha256'][target] = expected
+            receipt['source_files'][target] = original
+        write_json(support / 'source_run.json', receipt)
+        # Keep the selected review files visible. Preserve older collected
+        # extras and their receipt with the supporting records under model_dir.
+        for extra in destination.iterdir():
+            if extra.name not in {*FILES.values(), model_config_name(config)}:
+                archived = support / extra.name
+                if archived.exists():
+                    raise FileExistsError(f'Refusing to overwrite supporting file: {archived}')
+                extra.rename(archived)
     else:
         staging = output / ('.' + label + '.partial')
         staging.mkdir(exist_ok=False)
         hashes, sources = {}, {}
-        selected = dict(FILES)
-        selected.update({p.name: p.name for p in source.glob('validation_binary*_confusion_matrix.csv')})
-        for original, target in selected.items():
+        for original, target in FILES.items():
             if not (source / original).is_file():
                 raise FileNotFoundError(source / original)
             shutil.copy2(source / original, staging / target)
@@ -81,12 +218,17 @@ def export_run(source, output):
             if digest(staging / target) != hashes[target]:
                 raise ValueError(f'Copy verification failed: {target}')
             sources[target] = original
-        write_json(staging / 'source_run.json', {'source_run': str(source), 'experiment_id': identifier,
+        receipt = {'source_run': str(source), 'experiment_id': identifier,
                    'file_sha256': hashes, 'source_files': sources,
                    'collected_at_utc': datetime.now(timezone.utc).isoformat(),
-                   'note': 'Verified copies of the completed experiment; original artifacts retained'})
+                   'note': 'Verified copies of the completed experiment; original artifacts retained'}
+        write_json(support / 'source_run.json', receipt)
         staging.rename(destination)
         print(f'Collected: {label}', flush=True)
+    refresh_curve(source, destination, support, receipt, config, status)
+    refresh_predictions(source, destination, support, receipt, config)
+    refresh_dataset(source, destination, support, receipt, config)
+    refresh_config(source, destination, support, receipt, config)
     metrics = read(destination / 'validation_metrics.json')
     profile = config['dataset'].get('profile')
     label_version = {'ratings_8cc903b74f9f': 'reviewed_v1', 'ratings_281f9fcc448e': 'reviewed_v2',
@@ -106,26 +248,48 @@ def export_run(source, output):
     return row
 
 
+def write_summary(rows, output):
+    """Update collected rows while retaining runs collected outside the queue."""
+    summary = output / 'summary.csv'
+    existing = []
+    if summary.exists():
+        with summary.open(newline='', encoding='utf-8') as handle:
+            existing = list(csv.DictReader(handle))
+    merged = {row['folder']: row for row in existing}
+    merged.update({row['folder']: row for row in rows})
+    fieldnames = list(dict.fromkeys(key for row in merged.values() for key in row))
+    SUPPORT.mkdir(parents=True, exist_ok=True)
+    temporary = SUPPORT / 'summary.csv.tmp'
+    with temporary.open('w', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(merged.values())
+    temporary.replace(summary)
+
+
+def collect_run(source, output=ROOT / 'results'):
+    output = Path(output)
+    row = export_run(source, output)
+    write_summary([row], output)
+    return output / row['folder']
+
+
 def collect(queue_status, output):
     queue = read(queue_status)
     if queue.get('mode') != 'run':
         raise ValueError('Collect the full-run queue, not diagnostic smoke runs')
     output.mkdir(parents=True, exist_ok=True)
+    SUPPORT.mkdir(parents=True, exist_ok=True)
     rows = [export_run(item['run'], output) for item in queue['completed']]
     summary_pending = False
     if rows:
-        temporary = output / 'summary.csv.tmp'
-        with temporary.open('w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
         try:
-            temporary.replace(output / 'summary.csv')
+            write_summary(rows, output)
         except PermissionError:
             # Excel can keep the CSV locked. Models still collect normally;
             # refresh the summary on a later pass after the file is released.
             summary_pending = True
-    write_json(output / 'collection_status.json', {'source_queue': str(queue_status), 'queue_status': queue['status'],
+    write_json(SUPPORT / 'collection_status.json', {'source_queue': str(queue_status), 'queue_status': queue['status'],
                'completed_models_collected': len(rows), 'remaining_including_active': len(queue['remaining']),
                'summary_update_pending': summary_pending,
                'updated_at_utc': datetime.now(timezone.utc).isoformat()})
@@ -135,10 +299,15 @@ def collect(queue_status, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--queue-status', type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--queue-status', type=Path)
+    source.add_argument('--run-dir', type=Path)
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'results')
     parser.add_argument('--watch', action='store_true', help='Collect new completions until the queue finishes or fails')
     args = parser.parse_args()
+    if args.run_dir:
+        collect_run(args.run_dir.resolve(), args.output_dir.resolve())
+        return
     while True:
         try:
             queue = collect(args.queue_status.resolve(), args.output_dir.resolve())

@@ -58,7 +58,8 @@ def split_summary(rows):
 def verify(archive_path, refresh_diff=False):
     if digest(archive_path) != EXPECTED_ARCHIVE:
         raise ValueError('Reference archive differs from the audited supplied baseline')
-    runtime_before = {str(p.relative_to(ROOT)): digest(p) for p in (ROOT / 'auto_qc').rglob('*.py')}
+    runtime_paths = [*(ROOT / 'auto_qc').rglob('*.py'), *(ROOT / 'datasets').glob('*.py')]
+    runtime_before = {str(p.relative_to(ROOT)): digest(p) for p in runtime_paths}
     readme_before = digest(ROOT / 'README.md')
     original = HERE / 'original'
     with zipfile.ZipFile(archive_path) as archive:
@@ -88,6 +89,7 @@ def verify(archive_path, refresh_diff=False):
     import torch
     from torchvision import transforms
     from auto_qc.CNN import dataset as current_dataset
+    from datasets.generate_datasets import generate_targets
     from auto_qc.CNN.model import IQAnet
 
     old_model_path = original / 'auto_qc/CNN/model.py'
@@ -152,8 +154,8 @@ def verify(archive_path, refresh_diff=False):
         actual = current_dataset.extract_patches(image_path)
         assert torch.equal(expected, actual)
         records = pd.DataFrame({'image_id': [image_path.stem], 'image_path': [str(image_path)], 'split': ['train'], 'ganaav_grade': [3]})
-        records = current_dataset.generate_targets(records, 'hard_ganaav', ['ganaav_grade'])
-        data = current_dataset.ImageQualityDataset(records, 'hard_ganaav', augment=True)
+        records = generate_targets(records, 'hard_ganaav', ['ganaav_grade'])
+        data = current_dataset.ImagePatchDataset(records, 'hard_ganaav', augment=True)
         flip = transforms.RandomHorizontalFlip(p=1.)
         assert len(data) == 18
         for i in range(9):
@@ -170,13 +172,14 @@ def verify(archive_path, refresh_diff=False):
         'original': split_summary(old), 'current_saved_assignments': split_summary(new),
         'changed_assignments': sum(old[key][1] != new[key][1] for key in old),
         'patient_ids_unchanged': all(old[key][0] == new[key][0] for key in old)}
-    assert runtime_before == {str(p.relative_to(ROOT)): digest(p) for p in (ROOT / 'auto_qc').rglob('*.py')}
+    assert runtime_before == {str(p.relative_to(ROOT)): digest(p) for p in runtime_paths}
     assert readme_before == digest(ROOT / 'README.md')
     report.update(runtime_sources_unchanged_by_verification=True, root_readme_unchanged=True,
                   real_images_decoded=False, optimizer_steps=0, experiment_training_started=False,
                   statement='Numerical parity applies to original IQAnet and synthetic preprocessing, not to the new heads, targets or evaluation protocol')
     old_files = {str(p.relative_to(original)): p for p in original.rglob('*.py')}
     new_files = {str(p.relative_to(ROOT)): p for p in (ROOT / 'auto_qc/CNN').glob('*.py')}
+    new_files.update({str(p.relative_to(ROOT)): p for p in (ROOT / 'datasets').glob('*.py')})
     diffs, changed = [], []
     for name in sorted(set(old_files) | set(new_files)):
         left = old_files[name].read_text(encoding='utf-8-sig').splitlines() if name in old_files else []

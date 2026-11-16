@@ -12,14 +12,31 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def resolve_config_path(path):
+    """Keep saved queue references working after moving historical configs."""
+    path = Path(path)
+    if not path.exists():
+        try:
+            relative = path.resolve().relative_to(ROOT / 'configs')
+        except ValueError:
+            return path
+        if relative.parts and relative.parts[0] in ('checks', 'reruns'):
+            return ROOT / 'experiments' / 'configs' / relative
+    return path
+
+
 def sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return hashlib.sha256(resolve_config_path(path).read_bytes()).hexdigest()
 
 
 def read_config(path):
-    # JSON is a YAML 1.2 subset; emitted .yaml files need no extra parser dependency.
-    with Path(path).open(encoding='utf-8') as handle:
-        return json.load(handle)
+    with resolve_config_path(path).open(encoding='utf-8') as handle:
+        content = handle.read()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        import yaml
+        return yaml.safe_load(content)
 
 
 def write_json(path, value):
@@ -51,12 +68,17 @@ def fingerprint(model):
     return result.hexdigest()
 
 
+def source_files():
+    return sorted([*(ROOT / 'auto_qc').rglob('*.py'),
+                   *(ROOT / 'data' / 'tools').rglob('*.py'), *(ROOT / 'data').glob('*.py')])
+
+
 def code_version():
     command = ['git', '-c', f'safe.directory={ROOT.as_posix()}', '-C', str(ROOT)]
     result = subprocess.run(command + ['rev-parse', 'HEAD'], capture_output=True, text=True)
     status = subprocess.run(command + ['status', '--porcelain'], capture_output=True, text=True)
     return {'commit': result.stdout.strip() or 'unknown', 'dirty': bool(status.stdout.strip()),
-            'source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in sorted((ROOT / 'auto_qc').rglob('*.py'))},
+            'source_sha256': {str(p.relative_to(ROOT)): sha256(p) for p in source_files()},
             'dependencies': {name: importlib.metadata.version(name) for name in
                              ('torch', 'torchvision', 'numpy', 'pandas', 'Pillow', 'openpyxl', 'scikit-learn')}}
 
@@ -81,14 +103,27 @@ def class_weights(frame, specification):
     return torch.tensor(weights, dtype=torch.float32)
 
 
+def run_config_path(run_dir):
+    """Find internal run metadata, including older runs saved before cleanup."""
+    run_dir = Path(run_dir)
+    metadata = run_dir / 'support' / 'run_metadata.json'
+    if metadata.is_file():
+        return metadata
+    legacy = run_dir / 'config.yaml'
+    return legacy if legacy.is_file() else run_dir / 'checkpoint.pth'
+
+
 def load_checkpoint(run_dir, device='cpu'):
     from .model import make_model
+    from .configuration import load_run_config
     run_dir = Path(run_dir)
-    config = read_config(run_dir / 'config.yaml')
     saved = torch.load(run_dir / 'checkpoint.pth', map_location='cpu', weights_only=True)
+    config = load_run_config(run_dir, saved)
     if saved.get('schema') != 'autoqc_cnn_v1' or saved.get('architecture') != config['model']:
         raise ValueError('Checkpoint architecture/configuration mismatch')
-    if saved['dataset_sha256'] != sha256(run_dir / 'dataset.xlsx'):
+    snapshot_hash = (hashlib.sha256(saved['dataset_snapshot']).hexdigest()
+                     if 'dataset_snapshot' in saved else sha256(run_dir / 'dataset.xlsx'))
+    if saved['dataset_sha256'] != snapshot_hash:
         raise ValueError('Checkpoint dataset snapshot mismatch')
     model = make_model(config['model'], config['training']['seed'], load_source=False)
     model.load_state_dict(saved['model_state'], strict=True)

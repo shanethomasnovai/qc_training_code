@@ -1,0 +1,58 @@
+{
+  "n": 635,
+  "attributes": [
+    "Noise",
+    "Blur",
+    "Uneven Illumination",
+    "Dark",
+    "Artifact",
+    "Low Contrast",
+    "Bright"
+  ],
+  "graders": [
+    {
+      "name": "Shane",
+      "source": "C:\\Users\\Shane\\Downloads\\shane-image-file-listing (3).csv",
+      "counts": [
+        479,
+        101,
+        140,
+        95,
+        93,
+        28,
+        1
+      ],
+      "proportions": [
+        0.7543307086614173,
+        0.15905511811023623,
+        0.2204724409448819,
+        0.14960629921259844,
+        0.14645669291338584,
+        0.04409448818897638,
+        0.0015748031496062992
+      ]
+    },
+    {
+      "name": "Ganaav",
+      "source": "C:\\Users\\Shane\\Desktop\\qc_data\\labels\\ganaav_labels.csv",
+      "counts": [
+        422,
+        457,
+        33,
+        10,
+        29,
+        22,
+        1
+      ],
+      "proportions": [
+        0.6645669291338583,
+        0.7196850393700788,
+        0.05196850393700787,
+        0.015748031496062992,
+        0.04566929133858268,
+        0.03464566929133858,
+        0.0015748031496062992
+      ]
+    }
+  ]
+}

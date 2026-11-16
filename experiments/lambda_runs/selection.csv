@@ -1,0 +1,5 @@
+model,rank,lambda,config,status,output,error
+or_soft_binary,1,0.25,experiments/selected_runs/or_soft_binary_1.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\selected_or_soft_binary_1_20261105_101626_540011_3638a7b2,
+or_soft_binary,2,0.5,experiments/selected_runs/or_soft_binary_2.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\selected_or_soft_binary_2_20261105_103202_692309_ee4e3879,
+or_soft_binary,3,1.0,experiments/lambda_runs/lambda_1.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\or_soft_binary_lambda1_seed42_20261106_142229_367290_cc0bbd7e,
+or_soft_binary,4,2.0,experiments/lambda_runs/lambda_2.yaml,completed,C:\Users\Shane\Desktop\qc_data\models\or_soft_binary_lambda2_seed42_20261106_144630_087530_30c95076,

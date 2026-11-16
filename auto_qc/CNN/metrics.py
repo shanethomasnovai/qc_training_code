@@ -1,4 +1,4 @@
-from .dataset import generate_targets
+from data.labels import generate_targets
 
 """Evaluation only: grades 1-2 acceptable, grades 3-5 unacceptable (positive).
 
